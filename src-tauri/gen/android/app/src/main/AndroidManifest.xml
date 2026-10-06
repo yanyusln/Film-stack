@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 移动端的目录浏览 + 扫描都按**真实文件路径**读写（见 src/dirs.rs 头注）：
+         Rust 侧的 walkdir / std::fs 直接用 /storage/... ，不走 content://。
+         Android 11+ 要这样读就必须有「所有文件的访问权限」，否则一个字节都读不到。
+         - MANAGE_EXTERNAL_STORAGE：唯一途径，且只能用系统设置页开关（MainActivity 负责引导）
+         - READ_EXTERNAL_STORAGE(maxSdk 32)：老设备的旧权限
+         - READ_MEDIA_VIDEO：API 33+ 的媒体读取，作为全文件访问未授予时的兜底
+         本项目为侧载分发（AGENTS C2），不受应用商店对该敏感权限的上架限制。 -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+
+    <!-- AndroidTV support -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.film_stack"
+        android:usesCleartextTraffic="${usesCleartextTraffic}"
+        android:requestLegacyExternalStorage="true">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:launchMode="singleTask"
+            android:label="@string/main_activity_title"
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- AndroidTV support -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <provider
+          android:name="androidx.core.content.FileProvider"
+          android:authorities="${applicationId}.fileprovider"
+          android:exported="false"
+          android:grantUriPermissions="true">
+          <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

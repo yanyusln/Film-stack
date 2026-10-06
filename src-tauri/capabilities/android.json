@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/android-schema.json",
+  "identifier": "android-capability",
+  "description": "影栈 Android 能力（主窗口，最小权限：SAF/MediaStore 走 dialog，数据库在 Rust 侧）",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": ["core:default", "dialog:default"]
+}

@@ -1,0 +1,4 @@
+# 将 Rust 构建产物移出 D 盘：debug 目标可达 10GB+，D 盘空间紧张（曾触发 os error 112 磁盘不足）。
+# 改回默认只需删除本文件；或把路径改为其他有空间的盘。
+[build]
+target-dir = "E:/film-stack-target"
