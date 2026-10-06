@@ -54,6 +54,7 @@ src-tauri/gen/schemas/
 e2e/
 
 # ai参考文件（仅供 AI 读取，不入库）
+AGENTS.md
 assets/
 docs/
 CLAUDE.md
