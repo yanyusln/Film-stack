@@ -1,0 +1,52 @@
+{
+  "name": "film-stack",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "dev:desktop": "tauri dev",
+    "dev:android": "tauri android dev",
+    "init:android": "tauri android init",
+    "build:desktop": "vue-tsc --noEmit && vite build && tauri build",
+    "build:android": "vue-tsc --noEmit && vite build && tauri android build --apk --aab",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "lint": "eslint . && prettier -c .",
+    "typecheck": "vue-tsc --noEmit",
+    "tauri": "tauri",
+    "bench:gen": "node scripts/bench/gen-files.mjs",
+    "bench:clean": "node scripts/bench/gen-files.mjs --clean",
+    "audit:offline": "node scripts/audit-offline.mjs"
+  },
+  "dependencies": {
+    "@tanstack/vue-virtual": "^3.10.8",
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-dialog": "~2.8.0",
+    "pinia": "^3.0.1",
+    "vue": "^3.5.13",
+    "vue-draggable-plus": "^0.6.1",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/cli": "^2.1.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.5.1",
+    "eslint": "^9.18.0",
+    "eslint-plugin-vue": "^10.11.1",
+    "globals": "^17.13.0",
+    "jsdom": "^30.1.1",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.71.0",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8",
+    "vue-eslint-parser": "^10.4.1",
+    "vue-tsc": "^2.2.0"
+  }
+}

@@ -1,0 +1,40 @@
+# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+
+# 本地数据库与缩略图缓存（运行时生成，非源码）
+*.db
+*.db-shm
+*.db-wal
+src-tauri/*.db
+
+# 日志
+*.log
+
+# Playwright 产物
+playwright-report/
+test-results/
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.codebuddy/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+
+# Android产物
+src-tauri/
+
+# e2e测试
+e2e/
+
+# ai参考文件
+assets/
+docs/

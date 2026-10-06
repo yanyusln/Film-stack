@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/* 暗色切换：<html class="dark"> 时启用（见技术方案 §7.5 / §10.1） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 语义令牌（唯一真源：技术方案 §10.1）。粉仅做强调，背景双套，圆角 12px，8pt 网格。 */
+:root {
+  --pink: #fb7299;
+  --bg: #f4f5f7;
+  --bg-elev: #ffffff;
+  --ink-1: rgba(0, 0, 0, 0.86);
+  --ink-2: rgba(0, 0, 0, 0.56);
+  --ink-inv-1: rgba(255, 255, 255, 0.94);
+  --ink-inv-2: rgba(255, 255, 255, 0.68);
+  --line: rgba(0, 0, 0, 0.08);
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-pop: 16px;
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --fs-body: 14px;
+  --fs-title: 16px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --dur-control: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* 空状态线稿描边（技术方案 §10.3）：灰底灰线，粉只做强调 */
+  --illu-line: rgba(28, 31, 38, 0.24);
+
+  /* 安全区（W6-3）：刘海与底部手势条，未开启 viewport-fit 时为 0 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/* 暗色仅覆盖语义令牌；@theme 通过 var() 引用这些变量，故暗色对工具类生效 */
+.dark {
+  --bg: #1c1f26;
+  --bg-elev: #23272f;
+  --ink-1: rgba(255, 255, 255, 0.94);
+  --ink-2: rgba(255, 255, 255, 0.68);
+  --line: rgba(255, 255, 255, 0.1);
+  --illu-line: rgba(255, 255, 255, 0.28);
+}
+
+/* 安全区内边距：内容不被刘海 / 圆角 / 底部手势条裁掉 */
+.pad-x-safe {
+  padding-left: calc(16px + var(--safe-left));
+  padding-right: calc(16px + var(--safe-right));
+}
+.pad-top-safe {
+  padding-top: calc(12px + var(--safe-top));
+}
+.pad-bottom-safe {
+  padding-bottom: calc(16px + var(--safe-bottom));
+}
+.tab-safe {
+  padding-bottom: var(--safe-bottom);
+}
+
+/* 暴露为 Tailwind v4 工具类令牌（颜色/圆角/字重）。颜色经 var() 引用语义变量，支持暗色。 */
+@theme {
+  --color-pink: var(--pink);
+  --color-bg: var(--bg);
+  --color-bg-elev: var(--bg-elev);
+  --color-ink-1: var(--ink-1);
+  --color-ink-2: var(--ink-2);
+  --color-ink-inv-1: var(--ink-inv-1);
+  --color-ink-inv-2: var(--ink-inv-2);
+  --color-line: var(--line);
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-pop: 16px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
+  /* 断点与技术方案 §9.1 对齐：sm 360 / md 600 / lg 840 / xl 1440（覆盖 Tailwind 默认值） */
+  --breakpoint-sm: 360px;
+  --breakpoint-md: 600px;
+  --breakpoint-lg: 840px;
+  --breakpoint-xl: 1440px;
+}
