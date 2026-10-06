@@ -29,12 +29,34 @@ Thumbs.db
 # 临时文件
 tmp/
 
-# Android产物
-src-tauri/
+# Android / Gradle 构建产物（不可整目录忽略，src-tauri/src 等源码必须入库）
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/build/
+src-tauri/gen/android/buildSrc/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/.kotlin/
+src-tauri/gen/android/.cxx/
+src-tauri/gen/android/.externalNativeBuild/
+src-tauri/gen/android/captures/
+src-tauri/gen/android/.idea/
+src-tauri/gen/android/.tauri/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/key.properties
+src-tauri/gen/android/keystore.properties
+src-tauri/gen/android/tauri.settings.gradle
+*.apk
+*.aab
+
+# Tauri CLI 生成的能力 schema
+src-tauri/gen/schemas/
 
 # e2e测试
 e2e/
 
-# ai参考文件
+# ai参考文件（仅供 AI 读取，不入库）
+AGENTS.md
 assets/
 docs/
+CLAUDE.md
+.cursorrules
+.windsurfrules
