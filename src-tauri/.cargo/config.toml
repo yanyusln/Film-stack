@@ -2,3 +2,18 @@
 # 改回默认只需删除本文件；或把路径改为其他有空间的盘。
 [build]
 target-dir = "E:/film-stack-target"
+
+# Android 16KB page size 对齐（真机/模拟器提示 LOAD segment not aligned 的修复）：
+# 16KB 内核页大小的设备要求 .so 的 LOAD 段按 16384 字节对齐，否则进兼容模式甚至拒绝加载。
+# 改动后需重新编译（重新 pnpm dev:android / tauri build）才生效。
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.armv7-linux-androideabi]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.i686-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

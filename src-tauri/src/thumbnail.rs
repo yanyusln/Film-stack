@@ -239,11 +239,7 @@ fn extract_ffmpeg_thumb(src: &Path, out: &Path) -> Result<(), String> {
 /// `grace_secs`：刚被用过（`grace_secs` 秒内）的文件**跳过不删**——缓存里很可能
 /// 正放着一个几百 MB 的文件，按 mtime 排它是"最旧"的，直接删会把它播到一半掐掉。
 /// 缩略图不需要这层保护（传 0）。
-pub(crate) fn lru_cleanup(
-    dir: &Path,
-    max_bytes: u64,
-    grace_secs: u64,
-) -> Result<(), String> {
+pub(crate) fn lru_cleanup(dir: &Path, max_bytes: u64, grace_secs: u64) -> Result<(), String> {
     let now = SystemTime::now();
     let mut entries: Vec<(PathBuf, SystemTime, u64)> = Vec::new();
     let mut total = 0u64;

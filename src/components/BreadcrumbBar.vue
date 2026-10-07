@@ -18,11 +18,12 @@ defineEmits<{ (e: "navigate", key: string): void }>();
 </script>
 
 <template>
-  <div class="flex items-center justify-between gap-4">
+  <!-- 手机窄屏放不下时操作区整体换行，而不是把面包屑挤成一字一行 -->
+  <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
     <nav class="flex min-w-0 flex-wrap items-center gap-2" aria-label="目录">
       <button
         type="button"
-        class="cursor-pointer text-sm transition-colors duration-200"
+        class="whitespace-nowrap cursor-pointer text-sm transition-colors duration-200"
         :class="
           !rootLabel ? 'font-medium text-ink-1' : 'text-ink-2 hover:text-ink-1'
         "
@@ -35,7 +36,7 @@ defineEmits<{ (e: "navigate", key: string): void }>();
         <span class="text-sm text-ink-2/60">/</span>
         <button
           type="button"
-          class="cursor-pointer text-sm transition-colors duration-200"
+          class="whitespace-nowrap cursor-pointer text-sm transition-colors duration-200"
           :class="
             !crumbs.length
               ? 'font-medium text-ink-1'
@@ -65,7 +66,8 @@ defineEmits<{ (e: "navigate", key: string): void }>();
       </template>
     </nav>
 
-    <div class="flex shrink-0 items-center gap-2">
+    <!-- min-w-0：允许操作区收缩（内部输入框跟着缩），避免把面包屑挤没 -->
+    <div class="flex min-w-0 flex-wrap items-center justify-end gap-2">
       <slot name="actions" />
     </div>
   </div>

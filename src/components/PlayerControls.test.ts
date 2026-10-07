@@ -24,7 +24,10 @@ function mountControls(patch: Partial<typeof BASE> = {}) {
 }
 
 function btn(w: ReturnType<typeof mountControls>, label: string) {
-  const hit = w.findAll("button").find((b) => b.text() === label);
+  // 控制栏已全面图标化：文案在 aria-label / title 里，不在按钮 text() 里
+  const hit = w
+    .findAll("button")
+    .find((b) => b.attributes("aria-label") === label);
   if (!hit) throw new Error(`按钮不存在: ${label}`);
   return hit;
 }
@@ -63,20 +66,22 @@ describe("PlayerControls", () => {
 
   it("循环模式按钮在 不循环→单曲→列表 之间循环", async () => {
     const w = mountControls({ loopMode: "off" });
-    expect(btn(w, "不循环").exists()).toBe(true);
-    await btn(w, "不循环").trigger("click");
+    expect(btn(w, "循环模式：不循环").exists()).toBe(true);
+    await btn(w, "循环模式：不循环").trigger("click");
     expect(w.emitted("setLoop")).toEqual([["single"]]);
     await w.setProps({ loopMode: "single" });
-    await btn(w, "单曲循环").trigger("click");
+    await btn(w, "循环模式：单曲循环").trigger("click");
     expect(w.emitted("setLoop")?.at(-1)).toEqual(["list"]);
     await w.setProps({ loopMode: "list" });
-    await btn(w, "列表循环").trigger("click");
+    await btn(w, "循环模式：列表循环").trigger("click");
     expect(w.emitted("setLoop")?.at(-1)).toEqual(["off"]);
   });
 
   it("画中画只在 Android 出现（PC V1 不做）", () => {
-    expect(mountControls({ pipVisible: false }).text()).not.toContain("画中画");
-    expect(mountControls({ pipVisible: true }).text()).toContain("画中画");
+    const pip = (w: ReturnType<typeof mountControls>) =>
+      w.findAll("button").some((b) => b.attributes("aria-label") === "画中画");
+    expect(pip(mountControls({ pipVisible: false }))).toBe(false);
+    expect(pip(mountControls({ pipVisible: true }))).toBe(true);
   });
 
   it("控制栏淡出：不可见时透明且不接收点击", async () => {

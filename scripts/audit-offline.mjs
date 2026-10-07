@@ -280,28 +280,39 @@ const BANNED_DEPS = [
   );
 }
 
-// ⑧ asset 协议 scope：静态放行只覆盖缩略图目录，不放通用户根目录
+// ⑧ asset 协议 scope：主配置静态放行只覆盖应用数据目录；
+// Android 平台配置（tauri.android.conf.json）仅允许追加 /storage/**——
+// 移动端动态放行是 no-op（assets.rs::dynamic_grant_supported），用户媒体目录只能静态放行。
 {
   const confPath = join(ROOT, "src-tauri/tauri.conf.json");
   const conf = existsSync(confPath)
     ? JSON.parse(readFileSync(confPath, "utf8"))
     : {};
+  const androidPath = join(ROOT, "src-tauri/tauri.android.conf.json");
+  const androidConf = existsSync(androidPath)
+    ? JSON.parse(readFileSync(androidPath, "utf8"))
+    : {};
   const allow = conf?.app?.security?.assetProtocol?.scope?.allow ?? [];
+  const androidAllow =
+    androidConf?.app?.security?.assetProtocol?.scope?.allow ?? [];
+  const androidExtra = androidAllow.filter((p) => !allow.includes(p));
+  const androidBad = androidExtra.filter((p) => p !== "/storage/**");
   const wide = allow.filter(
     (p) =>
       p === "**" ||
       /^\/(?!\*)/.test(p) ||
       /^\$(HOME|DESKTOP|DOCUMENT|DOWNLOAD|APPDATA)\/?(\*\*)?$/.test(p),
   );
-  record(
-    "asset scope 只放行缩略图目录",
-    allow.length > 0 && wide.length === 0,
-    allow.length
-      ? wide.length
-        ? `过宽：${wide.join(", ")}`
-        : `allow：${allow.join(", ")}`
-      : "未配置 asset scope",
-  );
+  const ok = allow.length > 0 && wide.length === 0 && androidBad.length === 0;
+  const detail = [
+    wide.length
+      ? `主配置过宽：${wide.join(", ")}`
+      : `allow：${allow.join(", ")}`,
+    androidBad.length
+      ? `Android 平台配置越界（只允许 /storage/**）：${androidBad.join(", ")}`
+      : `Android 追加：${androidExtra.join(", ") || "无"}`,
+  ].join("；");
+  record("asset scope 只放行缩略图目录", ok, detail);
 }
 
 // ⑨ Android manifest：无网络与危险权限（C3 不联网）；未初始化 Android 工程则跳过
@@ -320,8 +331,10 @@ const BANNED_DEPS = [
       "未初始化 Android 工程（src-tauri/gen/android 不存在），跳过",
     );
   } else {
+    // INTERNET 是**有意为之**：Android 上即使只用回环 socket（本机媒体服务 127.0.0.1，
+    // 见 src/media_server.rs）也需要该权限；它不等于"联网"——C3 约束的是不访问外网，
+    // 由 CSP 无外部域名、源码无 fetch/XHR、产物无远程资源共同保证。
     const banned = [
-      "INTERNET",
       "ACCESS_NETWORK_STATE",
       "READ_PHONE_STATE",
       "ACCESS_FINE_LOCATION",

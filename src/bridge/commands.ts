@@ -152,6 +152,13 @@ export function probeVideo(path: string): Promise<VideoProbe> {
   return invoke<VideoProbe>("probe_video", { path });
 }
 
+// ---- 移动端媒体服务（回环 HTTP）----
+// Android 上 <video> 的请求不进 WebView 的 shouldInterceptRequest，asset 协议供不了视频；
+// 改由 Rust 侧的本机服务（127.0.0.1）供给。桌面端不启动该服务，调用会 reject，调用方需容错。
+export function mediaServerPort(): Promise<number> {
+  return invoke<number>("media_server_port");
+}
+
 // 把「放不了但救得回」的文件转封装到应用缓存（源文件一个字节都不动）。
 // 没有 ffmpeg / 救不回来时返回 error/skipped，前端据此退回手动方案。
 // onProgress 收流式进度：整文件读写可能跑几十秒，界面必须说清「在转、转了多少」。
@@ -167,4 +174,19 @@ export function remuxToCache(
 // 当前生效的放行规则表，供前端核对范围/排障（iOS/Android 不适用本机制）。
 export function listAssetRules(): Promise<AssetRuleView[]> {
   return invoke<AssetRuleView[]>("list_asset_rules");
+}
+
+// ---- 转封装缓存（设置页）----
+export interface RemuxCacheStats {
+  totalBytes: number;
+  fileCount: number;
+}
+
+export function remuxCacheStats(): Promise<RemuxCacheStats> {
+  return invoke<RemuxCacheStats>("remux_cache_stats");
+}
+
+// 返回清除前的占用，界面据此提示「已释放多少」。
+export function clearRemuxCache(): Promise<RemuxCacheStats> {
+  return invoke<RemuxCacheStats>("clear_remux_cache");
 }

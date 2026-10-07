@@ -25,9 +25,9 @@ use crate::thumbnail::lru_cleanup;
 
 /// 缓存上限：**不能照抄缩略图的 500MB**——单部课程录屏就 469MB，
 /// 500MB 会导致播一部挤掉上一部、来回重转。这里单独给 5GB。
-const MAX_CACHE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+pub(crate) const MAX_CACHE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 /// 刚用过（很可能正在播）的文件不删，见 `lru_cleanup` 的 grace 说明。
-const CACHE_GRACE_SECS: u64 = 10 * 60;
+pub(crate) const CACHE_GRACE_SECS: u64 = 10 * 60;
 /// 转封装是整文件读写：实测 469MB 只要 6s，但慢盘上的大文件可能几分钟，给 15 分钟硬上限。
 const REMUX_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// 进度回推间隔：按产物文件增长量估算，够密才"看得出在动"，又不至于刷屏。
@@ -52,11 +52,14 @@ pub struct RemuxResult {
     pub reason: Option<String>,
 }
 
-fn done(
+pub(crate) fn done(
     status: &'static str,
     path: Option<String>,
     reason: Option<String>,
 ) -> RemuxResult {
+    // 转封装的全部出口都过这里：一行日志进 logcat（tag stdout/stderr），
+    // 真机上「界面没反应」时可直接对出走了哪个出口、带什么原因。
+    eprintln!("[remux] status={status} reason={:?} path={:?}", reason, path);
     RemuxResult {
         status,
         path,
@@ -71,6 +74,58 @@ pub async fn remux_to_cache(
     app: AppHandle,
 ) -> Result<RemuxResult, String> {
     Ok(remux(&app, &path, Some(&on_progress)))
+}
+
+/// 转封装缓存占用（设置页展示 + 清除后回报释放量）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemuxCacheStats {
+    pub total_bytes: u64,
+    pub file_count: u32,
+}
+
+fn cache_stats(dir: &Path) -> RemuxCacheStats {
+    let mut total = 0u64;
+    let mut count = 0u32;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for e in entries.flatten() {
+            if let Ok(meta) = e.metadata() {
+                if meta.is_file() {
+                    total += meta.len();
+                    count += 1;
+                }
+            }
+        }
+    }
+    RemuxCacheStats { total_bytes: total, file_count: count }
+}
+
+#[tauri::command]
+pub fn remux_cache_stats(app: AppHandle) -> Result<RemuxCacheStats, String> {
+    let dir = cache_dir(&app)?;
+    Ok(cache_stats(&dir))
+}
+
+/// 清空转封装缓存（只删 `remux/` 里的产物文件，目录保留；源文件与缩略图不受影响）。
+/// 返回清除前的占用，给界面一句「已释放 x MB」。转封装进行中调用可能删掉
+/// 正在写的 `.part.mp4`，那只影响那一次转换（会报 io_error 重转即可），无害。
+#[tauri::command]
+pub fn clear_remux_cache(app: AppHandle) -> Result<RemuxCacheStats, String> {
+    let dir = cache_dir(&app)?;
+    let stats = cache_stats(&dir);
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if let Ok(meta) = e.metadata() {
+                if meta.is_file() {
+                    if let Err(err) = fs::remove_file(e.path()) {
+                        eprintln!("[remux] 清缓存删除失败 {:?}: {err}", e.path());
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("[remux] 缓存已清除: {} 文件 / {} 字节", stats.file_count, stats.total_bytes);
+    Ok(stats)
 }
 
 /// 进入 ffmpeg 之前的判定：**源不在 / 不需要转都不该动 ffmpeg**。
@@ -92,10 +147,10 @@ pub fn remux(
     raw: &str,
     on_progress: Option<&Channel<RemuxProgress>>,
 ) -> RemuxResult {
-    // 平台不具备 ffmpeg 能力时**连源文件都不必探**：Android 上库里存的是 content:// URI，
-    // `probe` 的 std::fs 读盘注定失败，只会把真实原因（平台不支持）盖成 source_missing。
+    // 手机端没有外部 ffmpeg：改走内置的轻量重封装（`aviremux`，纯 Rust）。
+    // 它只救「AVI + H.264 + MP3/AAC」这一类**换容器就能播**的文件，其余照旧明确不支持。
     if !crate::ffmpeg::platform_supports_ffmpeg() {
-        return done("error", None, Some("unsupported_platform".to_string()));
+        return crate::aviremux::remux_avi(app, raw, on_progress);
     }
     if let Some(r) = precheck(raw) {
         return r;
@@ -112,9 +167,19 @@ pub fn remux(
     let key = cache_key(src, info.size.unwrap_or(0));
     let out = dir.join(format!("{key}.mp4"));
     if out.exists() {
-        // 命中即续命：否则正在播的那部会因为"最旧"被下一次转封装清掉
-        touch(&out);
-        return done("cached", Some(out.to_string_lossy().to_string()), None);
+        // 与 aviremux 同一道闸：0 字节产物（并发截断/半途而废）绝不许当有效缓存复用。
+        // 转封装（-c copy）不重编码，产物体积必然接近源文件——残缺产物（如中途夭折
+        // 只写出零头的）低于源文件一半即视为损坏，删掉重转。
+        let src_size = info.size.unwrap_or(0);
+        let usable = fs::metadata(&out)
+            .map(|m| m.len() > 0 && (src_size == 0 || m.len() * 2 >= src_size))
+            .unwrap_or(false);
+        if usable {
+            // 命中即续命：否则正在播的那部会因为"最旧"被下一次转封装清掉
+            touch(&out);
+            return done("cached", Some(out.to_string_lossy().to_string()), None);
+        }
+        let _ = fs::remove_file(&out);
     }
 
     let tmp = cache_tmp_path(&dir, &key);
@@ -190,7 +255,7 @@ fn spawn_progress_watcher(
 }
 
 /// 产物可能比源文件略大（muxing overhead），故封顶 99：100% 留给"转好了"那一刻。
-fn pct_of(done: u64, total: u64) -> u8 {
+pub(crate) fn pct_of(done: u64, total: u64) -> u8 {
     if total == 0 {
         return 0;
     }
@@ -218,11 +283,11 @@ fn remux_args(video_supported: Option<bool>) -> Vec<String> {
 const OUTPUT_PIN: [&str; 2] = ["-f", "mp4"];
 
 /// 临时产物名：rename 到 `{key}.mp4` 之前的中转文件，**必须带标准扩展名**（见 [`OUTPUT_PIN`]）。
-fn cache_tmp_path(dir: &Path, key: &str) -> PathBuf {
+pub(crate) fn cache_tmp_path(dir: &Path, key: &str) -> PathBuf {
     dir.join(format!("{key}.part.mp4"))
 }
 
-fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -236,7 +301,7 @@ fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
 ///
 /// 用库里同一套采样指纹（192KB），文件改名/移动后缓存仍能命中；
 /// 采样哈希理论上有碰撞，拼上 size 基本杜绝——**撞了就是播错文件**，比放不了更糟。
-fn cache_key(path: &Path, size: u64) -> String {
+pub(crate) fn cache_key(path: &Path, size: u64) -> String {
     let fp = crate::db::compute_fingerprint(path, size).unwrap_or_else(|| {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -244,10 +309,12 @@ fn cache_key(path: &Path, size: u64) -> String {
         format!("path{:x}", h.finish())
     });
     let head = &fp[..fp.len().min(16)];
-    format!("{head}-{size}")
+    // 封装器版本号：产物字节格式变化（如 dref 修复、音频改为连续流）时 +1，
+    // 让历史坏产物整体失效重转（真机实证：旧产物会被缓存命中，改了代码也白改）。
+    format!("{head}-{size}-v3")
 }
 
-fn touch(p: &Path) {
+pub(crate) fn touch(p: &Path) {
     if let Ok(f) = fs::OpenOptions::new().write(true).open(p) {
         let _ = f.set_modified(std::time::SystemTime::now());
     }

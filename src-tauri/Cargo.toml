@@ -24,6 +24,8 @@ sha2 = "0.10"
 notify = "6.1"
 # W1-4 扫描骨架：Rust 侧直接写入同一 SQLite 文件（插件池的查询方法为 crate-private，消费端不可调用）
 rusqlite = { version = "0.32", features = ["bundled"] }
+# 日志门面：与 tauri 内部同一套（log），输出不落文件、不含完整路径（C3 日志脱敏）
+log = "0.4"
 # W2-2 缩略图队列：并发控制与进度等待用的异步定时器
 tokio = { version = "1", features = ["time"] }
 

@@ -89,16 +89,9 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
 }
 
 /// 缺列才 ALTER：`pragma_table_info` 守卫，保证迁移重复执行幂等。
-fn ensure_column(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    ddl: &str,
-) -> Result<(), String> {
+fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> Result<(), String> {
     let sql = format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='{column}'");
-    let has: i64 = conn
-        .query_row(&sql, [], |r| r.get(0))
-        .unwrap_or(0);
+    let has: i64 = conn.query_row(&sql, [], |r| r.get(0)).unwrap_or(0);
     if has == 0 {
         conn.execute_batch(ddl).map_err(|e| e.to_string())?;
     }
@@ -193,9 +186,11 @@ pub fn scan_generation(now: i64, max_seen: i64) -> i64 {
 }
 
 pub fn max_scanned_at(conn: &Connection) -> i64 {
-    conn.query_row("SELECT COALESCE(MAX(last_scanned_at), 0) FROM videos", [], |r| {
-        r.get(0)
-    })
+    conn.query_row(
+        "SELECT COALESCE(MAX(last_scanned_at), 0) FROM videos",
+        [],
+        |r| r.get(0),
+    )
     .unwrap_or(0)
 }
 
@@ -296,10 +291,8 @@ pub fn mark_missing(conn: &Connection, root_id: &str, gen: i64) -> Result<usize,
         // 一条语句搞定：单语句自带原子性，也避免在只读引用上开事务
         let placeholders = vec!["?"; gone.len()].join(",");
         let sql = format!("UPDATE videos SET missing = 1 WHERE id IN ({placeholders})");
-        let params: Vec<&dyn rusqlite::ToSql> = gone
-            .iter()
-            .map(|id| id as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            gone.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
         conn.execute(&sql, params.as_slice())
             .map_err(|e| e.to_string())?;
     }
@@ -917,7 +910,12 @@ mod tests {
     fn flush_batch_counts_added_then_updated() {
         let mut conn = mem_db();
         let (mut a, mut u) = (0u32, 0u32);
-        commit(&mut conn, &[vrow("v1", "r1", "a.mp4", None)], &mut a, &mut u);
+        commit(
+            &mut conn,
+            &[vrow("v1", "r1", "a.mp4", None)],
+            &mut a,
+            &mut u,
+        );
         assert_eq!((a, u), (1, 0));
 
         // 同 id 再扫一遍：size 变了算更新，行数不变
@@ -975,7 +973,10 @@ mod tests {
         let (mut a, mut u) = (0u32, 0u32);
         commit(
             &mut conn,
-            &[vrow("v1", "r1", "a.mp4", None), vrow("v2", "r2", "a.mp4", None)],
+            &[
+                vrow("v1", "r1", "a.mp4", None),
+                vrow("v2", "r2", "a.mp4", None),
+            ],
             &mut a,
             &mut u,
         );
@@ -988,7 +989,12 @@ mod tests {
     fn removing_group_drops_references_only() {
         let mut conn = mem_db();
         let (mut a, mut u) = (0u32, 0u32);
-        commit(&mut conn, &[vrow("v1", "r1", "a.mp4", None)], &mut a, &mut u);
+        commit(
+            &mut conn,
+            &[vrow("v1", "r1", "a.mp4", None)],
+            &mut a,
+            &mut u,
+        );
 
         let g = create_group(&conn, "收藏").unwrap();
         assert_eq!(add_to_group(&conn, &g.id, &["v1".to_string()]).unwrap(), 1);
@@ -1256,7 +1262,11 @@ mod tests {
         let base = compute_fingerprint(&p, len as u64).unwrap();
 
         // 三个采样点任一变化都要换指纹
-        for (label, at) in [("head", 1_000usize), ("mid", 512 * 1024), ("tail", len - 10)] {
+        for (label, at) in [
+            ("head", 1_000usize),
+            ("mid", 512 * 1024),
+            ("tail", len - 10),
+        ] {
             let mut d = base_data.clone();
             d[at] = 1;
             std::fs::write(&p, &d).unwrap();

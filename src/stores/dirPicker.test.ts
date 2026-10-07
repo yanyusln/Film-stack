@@ -18,6 +18,7 @@ vi.mock("@/platform", () => ({
   usePlatform: () => ({
     isAndroid: platform.isAndroid,
     needsAssetGrant: true,
+    toAssetUrl: (p: string) => `asset://${p}`,
     enterPip: async () => false,
     lockOrientation: async () => false,
     setBrightness: () => {},

@@ -1,6 +1,5 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import * as cmd from "@/bridge/commands";
 import type {
   AssetGrant,
@@ -88,7 +87,12 @@ export const usePlayerStore = defineStore("player", () => {
     // 转好再切源，用户看到的是「准备中 → 播放」，因果连贯。
     if (remuxState.value === "preparing" || remuxState.value === "working")
       return null;
-    return convertFileSrc(remuxPath.value ?? v.path);
+    // 转封装失败后也**不给 src**：若回落到原文件，`<video>` 会再次报错 →
+    // onMediaError 再触发一次自检+转封装 → 又失败 → 又回落……
+    // error→转封装→失败→重载 无限循环，真机表现为播放页整页闪烁。
+    // 失败就停在失败态，结论由界面文案给出（remuxReason / probeResult）。
+    if (remuxState.value === "failed") return null;
+    return usePlatform().toAssetUrl(remuxPath.value ?? v.path);
   });
   const hasPrev = computed(
     () => prevIndex(index.value, playlist.value.length) !== null,
@@ -171,7 +175,7 @@ export const usePlayerStore = defineStore("player", () => {
       remuxState.value = "idle";
       return;
     }
-    if (remuxState.value === "ready") return;
+    if (remuxState.value === "ready" || remuxState.value === "failed") return;
     const blocked =
       !!unplayableContainerLabel(v.container ?? null) ||
       !!probeResult.value?.suggestCommand;
@@ -180,6 +184,8 @@ export const usePlayerStore = defineStore("player", () => {
       remuxState.value = "idle";
       return;
     }
+    // 手机端没有 ffmpeg，但 AVI（H.264 + MP3/AAC）由 Rust 侧的轻量重封装兜住
+    // （`aviremux`：换容器不需要解码器）；救不了的会回 `error` + 原因码，界面照旧说话。
     remuxState.value = "working";
     remuxReason.value = null;
     remuxProgress.value = null;
@@ -446,9 +452,18 @@ function dirOf(path: string): string {
  * 两条都拿不到结果时返回最后一次的 reason，交给界面做分诊展示。
  */
 async function ensureAsset(v: PlaylistItem): Promise<AssetGrant | null> {
-  // Android / iOS 上这套机制是 no-op（assets.rs::dynamic_grant_supported 恒为 false），
-  // 调了也只拿回 skipped_mobile——省掉开播路上这两次 IPC，也避免界面把它当成"未放行"。
-  if (!usePlatform().needsAssetGrant) return null;
+  // Android / iOS 上这套机制是 no-op（assets.rs::dynamic_grant_supported 恒为 false）。
+  // 不发起 IPC，但要把「平台跳过」这个结论交给界面：返回 null 会让失败文案显示
+  // 「授权：未执行」，把人往授权方向带偏——移动端本来就不走 asset scope。
+  if (!usePlatform().needsAssetGrant) {
+    return {
+      path: v.path,
+      kind: null,
+      mode: null,
+      applied: false,
+      reason: "skipped_mobile",
+    };
+  }
   const dir = dirOf(v.path);
   const byDir = await cmd.grantAssetRoot(dir).catch(() => null);
   if (byDir && (byDir.applied || byDir.reason === "already_allowed")) {

@@ -158,6 +158,18 @@ const resumePosition = computed(() =>
 const pipVisible = computed(() => caps.value.pip.supported && !pipActive.value);
 
 /**
+ * 放不了的容器点名到具体格式（`AVI` / `MKV` …）：用户看到的必须是「AVI 放不了」，
+ * 而不是一句笼统的「自动转封装不可用」——真机反馈里那句小灰字被当成了没提示。
+ * 库里没记容器（老数据）时用自检结果兜底，都没有才退回「该文件」。
+ */
+const blockedContainer = computed(
+  () =>
+    unplayableContainerLabel(player.current?.container ?? null) ??
+    unplayableContainerLabel(player.probeResult?.container ?? null) ??
+    "该文件",
+);
+
+/**
  * 播放失败分诊：`<video>` 的 `error.code` 本身就能区分「源不可用 / 解码失败 / 读取失败」，
  * 再拼上 asset 协议的放行结果——真机上不必靠猜（v1 反馈的「加载失败」就是把三种原因揉成一句）。
  */
@@ -358,8 +370,13 @@ onBeforeUnmount(() => {
           {{ current?.path ?? "还没有选择影片" }}
         </p>
       </div>
-      <RouterLink to="/" class="text-sm text-ink-2 hover:text-ink-1">
-        返回影片库
+      <RouterLink
+        to="/"
+        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-btn text-ink-2 transition-colors duration-200 ease-out hover:text-ink-1"
+        aria-label="返回影片库"
+        title="返回影片库"
+      >
+        <AppIcon name="arrow-left" :size="20" />
       </RouterLink>
     </header>
 
@@ -517,12 +534,16 @@ onBeforeUnmount(() => {
 
     <!-- 进度与说明都在画面上的遮罩里，这里不再重复一遍（省得两处文案不同步） -->
     <!-- 失败必须说话：否则界面只剩「放不了」，用户无从判断是没装 ffmpeg 还是别的 -->
-    <p v-if="player.remuxState === 'failed'" class="text-xs text-ink-2">
-      自动转封装不可用（{{ remuxReasonText(player.remuxReason) }}）。{{
-        platform.isAndroid
-          ? "请用 MX Player / VLC 打开该文件（自带解码器，能播 AVI）。"
-          : "可退回下面的手动方案（原文件不动）。"
-      }}
+    <!-- Android 上这条是**唯一的**失败说明（src 为空 → onMediaError 短路），必须点名容器 -->
+    <p v-if="player.remuxState === 'failed'" class="text-sm text-pink">
+      {{ blockedContainer }} 容器内置播放器不支持（{{
+        remuxReasonText(player.remuxReason)
+      }}）。
+      <template v-if="platform.isAndroid">
+        请用 MX Player / VLC 打开该文件（自带解码器），或在电脑上转成 MP4
+        后拷回。
+      </template>
+      <template v-else>可退回下面的手动方案（原文件不动）。</template>
     </p>
     <p v-if="errorText" class="text-sm text-pink">{{ errorText }}</p>
     <p v-if="errorText" class="text-xs text-ink-2">

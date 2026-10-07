@@ -794,6 +794,7 @@ dependencies = [
 name = "film-stack"
 version = "1.0.0"
 dependencies = [
+ "log",
  "notify",
  "rusqlite",
  "serde",

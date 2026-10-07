@@ -70,7 +70,7 @@ export function probeSummary(p: VideoProbe | null): string {
  */
 export function remuxHelp(isAndroid: boolean): string {
   return isAndroid
-    ? "手机上没有终端也没有 ffmpeg，命令行转封装不适用。请用 MX Player / VLC 打开该文件（自带解码器，能播 AVI）；或回到电脑上转好再传进手机。"
+    ? "手机端会先尝试内置的轻量重封装（AVI 里的 H.264 换容器即可播）；仍放不了说明需要重编码，手机上做不了。请用 MX Player / VLC 打开该文件（自带解码器）；或回到电脑上转好再传进手机。"
     : "复制下面这行到终端执行（输出到 *_remux.mp4，不动原文件）。若提示「ffmpeg 不是可识别的命令」：先在 PowerShell 跑 winget install Gyan.FFmpeg（或到 gyan.dev 下载解压、把 bin 加进 PATH），装完重开终端。";
 }
 
@@ -89,6 +89,12 @@ export function remuxReasonText(reason: string | null): string {
     source_missing: "源文件读不到",
     timeout: "转换超时",
     invoke_failed: "桥接调用失败",
+    // 手机端轻量重封装（`aviremux`）专用：救不了要说清是**容器**还是**编码**挡着
+    container_unsupported: "手机端只能重封装 AVI，别的容器救不了",
+    codec_unsupported: "视频编码不是 H.264（如 Xvid），手机上无法转换",
+    audio_unsupported: "音轨既不是 MP3 也不是 AAC，手机上无法转换",
+    avi_malformed: "AVI 结构异常，读不出完整的一帧",
+    no_sps_pps: "H.264 缺 SPS/PPS，无法重封装",
   };
   return MAP[reason] ?? reason;
 }

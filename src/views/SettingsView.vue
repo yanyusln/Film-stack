@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useUiStore } from "@/stores/ui";
 import type { ResumePreference } from "@/composables/playbackPolicy";
+import {
+  clearRemuxCache,
+  remuxCacheStats,
+  type RemuxCacheStats,
+} from "@/bridge/commands";
+import AppIcon from "@/components/AppIcon.vue";
 
 // 设置页（W4-b 起接入播放相关开关；W5 补齐结束策略开关）。
 const ui = useUiStore();
@@ -34,6 +40,44 @@ const advance = computed({
   get: () => autoAdvance.value,
   set: (v: boolean) => ui.setAutoAdvance(v),
 });
+
+// ---- 转封装缓存 ----
+const cache = ref<RemuxCacheStats | null>(null);
+const clearing = ref(false);
+
+async function refreshCache() {
+  try {
+    cache.value = await remuxCacheStats();
+  } catch {
+    // 平台不支持（如桌面早期版本）就静默不显示占用
+  }
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${n} B`;
+}
+
+async function onClearCache() {
+  if (clearing.value) return;
+  clearing.value = true;
+  try {
+    const freed = await clearRemuxCache();
+    ui.notify(
+      `已清除转封装缓存，释放 ${formatBytes(freed.totalBytes)}`,
+      "info",
+    );
+    await refreshCache();
+  } catch {
+    ui.notify("清除缓存失败", "error");
+  } finally {
+    clearing.value = false;
+  }
+}
+
+onMounted(refreshCache);
 </script>
 
 <template>
@@ -118,6 +162,35 @@ const advance = computed({
           {{ advance ? "已开启" : "播完暂停" }}
         </label>
       </div>
+    </div>
+
+    <div
+      class="flex items-center justify-between gap-4 rounded-card bg-bg-elev p-4"
+      style="border: 1px solid var(--line)"
+    >
+      <div class="min-w-0">
+        <p class="text-sm font-medium text-ink-1">转封装缓存</p>
+        <p class="text-xs text-ink-2">
+          不能直接播的容器（AVI/MKV 等）会转成 MP4
+          存在应用缓存里，原文件不动。清掉后下次播放会重新转。<template
+            v-if="cache"
+          >
+            当前占用 {{ formatBytes(cache.totalBytes) }} ·
+            {{ cache.fileCount }} 个文件。</template
+          >
+        </p>
+      </div>
+      <button
+        type="button"
+        class="flex h-10 shrink-0 items-center gap-1.5 rounded-btn px-3 text-sm text-ink-1 transition-colors duration-200 ease-out hover:text-pink disabled:opacity-40"
+        style="border: 1px solid var(--line)"
+        :disabled="clearing"
+        aria-label="清除转封装缓存"
+        @click="onClearCache"
+      >
+        <AppIcon name="trash-2" :size="18" />
+        {{ clearing ? "清除中…" : "清除缓存" }}
+      </button>
     </div>
   </section>
 </template>

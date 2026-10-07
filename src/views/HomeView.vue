@@ -221,7 +221,7 @@ defineExpose({ refreshSelected });
             v-model="keyword"
             type="search"
             placeholder="搜索当前目录"
-            class="h-9 w-44 rounded-btn bg-bg-elev pl-3 pr-8 text-sm text-ink-1 placeholder:text-ink-2 md:w-56"
+            class="h-9 w-32 min-w-0 max-w-full rounded-btn bg-bg-elev pl-3 pr-8 text-sm text-ink-1 placeholder:text-ink-2 sm:w-44 md:w-56"
             style="border: 1px solid var(--line)"
             aria-label="搜索当前目录"
           />
@@ -237,7 +237,7 @@ defineExpose({ refreshSelected });
         </div>
         <button
           type="button"
-          class="flex h-9 cursor-pointer items-center gap-1 rounded-btn bg-pink px-4 text-sm font-medium text-white transition-opacity duration-200 disabled:opacity-50"
+          class="flex h-9 shrink-0 cursor-pointer items-center gap-1 rounded-btn bg-pink px-4 text-sm font-medium whitespace-nowrap text-white transition-opacity duration-200 disabled:opacity-50"
           :disabled="isScanning"
           @click="onAdd"
         >
@@ -246,7 +246,7 @@ defineExpose({ refreshSelected });
         </button>
         <button
           type="button"
-          class="grid h-9 w-9 cursor-pointer place-items-center rounded-btn text-ink-2 transition-colors duration-200 hover:bg-ink-1/5 hover:text-ink-1 disabled:opacity-40"
+          class="grid h-9 w-9 shrink-0 cursor-pointer place-items-center rounded-btn text-ink-2 transition-colors duration-200 hover:bg-ink-1/5 hover:text-ink-1 disabled:opacity-40"
           aria-label="刷新当前目录"
           :disabled="!selectedRootId || loading"
           @click="refreshSelected"
@@ -282,11 +282,13 @@ defineExpose({ refreshSelected });
           <p class="truncate text-xs text-ink-2">{{ r.path }}</p>
         </button>
         <button
-          class="ml-4 shrink-0 text-sm text-ink-2 hover:text-ink-1 disabled:opacity-40"
+          class="ml-4 grid h-8 w-8 shrink-0 place-items-center rounded-btn text-ink-2 transition-colors duration-200 hover:text-ink-1 disabled:opacity-40"
           :disabled="isScanning"
+          aria-label="移除目录"
+          title="移除"
           @click="onRemove(r.id)"
         >
-          移除
+          <AppIcon name="trash-2" :size="16" />
         </button>
       </li>
     </ul>

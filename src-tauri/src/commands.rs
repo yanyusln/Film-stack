@@ -532,7 +532,11 @@ mod tests {
         let a = video_id("r1", "D:\\v\\a.mp4");
         assert_eq!(a, video_id("r1", "D:\\v\\a.mp4"), "同一路径必须稳定");
         assert_ne!(a, video_id("r1", "D:\\v\\b.mp4"));
-        assert_ne!(a, video_id("r2", "D:\\v\\a.mp4"), "同文件多根目录各自成条目");
+        assert_ne!(
+            a,
+            video_id("r2", "D:\\v\\a.mp4"),
+            "同文件多根目录各自成条目"
+        );
         assert!(a.starts_with("v1_"));
         assert_eq!(a.len(), "v1_".len() + 16);
     }

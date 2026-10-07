@@ -1,10 +1,15 @@
 // 影栈 Tauri 入口。W1-4 起注册根目录管理与扫描命令；插件只有 dialog——
 // 文件读写走 Rust `std::fs`、数据库走 rusqlite 直连，fs/sql 插件用不上（W7-3 权限最小化已摘除）。
 mod assets;
+// 手机端的轻量重封装（AVI → MP4，纯 Rust）：没有 ffmpeg 的平台上靠它救回 AVI
+mod aviremux;
 mod commands;
 mod db;
 mod dirs;
 mod ffmpeg;
+// 移动端媒体服务（回环 HTTP）：Android WebView 的 <video> 请求不走 shouldInterceptRequest，
+// 只能由本机服务供给，见模块头注。桌面端不启动（asset 协议可用），命令会返回 not_running。
+mod media_server;
 mod probe;
 mod progress;
 mod remux;
@@ -47,11 +52,17 @@ pub fn run() {
             progress::clear_progress,
             probe::probe_video,
             remux::remux_to_cache,
+            remux::remux_cache_stats,
+            remux::clear_remux_cache,
+            media_server::media_server_port,
         ])
         .setup(|app| {
             // 数据库迁移由 db::run_migrations 在首次连库时执行（见 migrations/0001_init.sql）
             // runtime 放行不落盘：按库里已存的根目录恢复一次，否则重启后旧目录又取不到文件
             crate::assets::grant_persisted_roots(app.handle());
+            // 仅 Android 需要：asset 协议供不了 <video>（media 层不进 WebView 拦截）
+            #[cfg(target_os = "android")]
+            crate::media_server::start(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

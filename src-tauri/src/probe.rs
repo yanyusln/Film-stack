@@ -44,7 +44,7 @@ pub struct VideoProbe {
 /// 视频编码 fourcc -> （人话名，是否不在白名单）。
 /// 判定基准：Chromium/WebView2 的解码白名单（H.264/VP9/AV1/VP8 放行，
 /// HEVC、MPEG-4 Part 2、VC-1/WMV、MJPEG、DV、无损、屏幕录制类默认不放行）。
-fn describe(fourcc: &str) -> Option<(&'static str, bool)> {
+pub(crate) fn describe(fourcc: &str) -> Option<(&'static str, bool)> {
     let m: &[(&str, &'static str, bool)] = &[
         ("avc1", "h264", false),
         ("avc3", "h264", false),
@@ -116,14 +116,21 @@ fn describe_audio_tag(tag: u16) -> Option<(&'static str, bool)> {
         .map(|(_, name, unsupported)| (*name, *unsupported))
 }
 
-/// AVI 的容器结论：Chromium/Edge 的 HTML5 `<video>` 只接受 mp4/m4v、webm、ogg。
+/// 内置播放器（WebView2 / Android WebView 同为 Chromium）真正接受的容器。
+/// 注意 **MKV（matroska）不在内**：它与 webm 同源但 Chromium 不认，送进 `<video>`
+/// 只会报「源不可用」；以前把它算成可播，是这张表最贵的一个错（MKV 用户点开就是黑屏）。
+const PLAYABLE_CONTAINERS: &[&str] = &["mp4", "m4v", "webm", "ogg", "ogv"];
+
+/// 容器层面的结论：不在上表内就点名说清，并给出路（转封装为 MP4）。
 fn container_hint(container: &str) -> Option<String> {
     let low = container.to_ascii_lowercase();
-    if low.starts_with("mp4") || low.contains("webm") || low.contains("matroska") {
+    // "mp4 (isom)" -> "mp4"、"asf / wmv" -> "asf"、"matroska / webm" -> "matroska"
+    let short = low.split([' ', '(', '/']).next().unwrap_or("");
+    if PLAYABLE_CONTAINERS.contains(&short) {
         return None;
     }
     Some(format!(
-        "{container} 不在 Chromium/Edge 的 HTML5 <video> 接受类型内（仅 mp4/m4v、webm、ogg）"
+        "{container} 不在内置播放器接受的容器内（仅 mp4/m4v、webm、ogg）；MKV/AVI/MOV/WMV 需转封装为 MP4"
     ))
 }
 
@@ -312,27 +319,29 @@ fn locate_stsd(file: &mut File, size: u64, head: &[u8]) -> Option<Vec<u8>> {
 
 // ---------------------------------------------------------------- AVI (RIFF)
 
-struct RiffEntry {
-    kind: [u8; 4],
-    list_type: [u8; 4],
-    start: usize,
-    end: usize,
+pub(crate) struct RiffEntry {
+    pub(crate) kind: [u8; 4],
+    pub(crate) list_type: [u8; 4],
+    pub(crate) start: usize,
+    /// 钳制到缓冲区边界的 end：只可用于**缓冲区内切片**（越界会 panic）。
+    pub(crate) end: usize,
+    /// 未钳制的 `pos + 8 + size`：chunk 声明的真实终点。**缓冲区只装了文件头部时**
+    /// （aviremux 的 1MB HEAD_SCAN），`LIST(movi)` 的 size 是几百 MB，`end` 会被
+    /// 钳成缓冲区边界——真机实证：movi_end 变成 1MB，重封装只转出 72 帧却「成功」，
+    /// 产物 981KB 无法播放。需要真实边界（如 movi 终点）的调用方必须用这个字段。
+    pub(crate) raw_end: usize,
 }
 
 /// 遍历一层 RIFF chunk（`LIST`/`RIFF` 记下它的 form type）。AVI 的 chunk 按 2 字节对齐。
-fn iter_riff(data: &[u8], from: usize, to: usize) -> Vec<RiffEntry> {
+pub(crate) fn iter_riff(data: &[u8], from: usize, to: usize) -> Vec<RiffEntry> {
     let mut out = Vec::new();
     let mut pos = from;
     let limit = to.min(data.len());
     while pos + 8 <= limit {
         let mut kind = [0u8; 4];
         kind.copy_from_slice(&data[pos..pos + 4]);
-        let size = u32::from_le_bytes([
-            data[pos + 4],
-            data[pos + 5],
-            data[pos + 6],
-            data[pos + 7],
-        ]) as usize;
+        let size = u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+            as usize;
         let is_list = &kind == b"RIFF" || &kind == b"LIST";
         let head = if is_list { 12 } else { 8 };
         let start = pos + head;
@@ -349,6 +358,7 @@ fn iter_riff(data: &[u8], from: usize, to: usize) -> Vec<RiffEntry> {
             list_type,
             start,
             end,
+            raw_end: pos + 8 + size,
         });
         pos = pos + 8 + size;
         if pos % 2 == 1 {
@@ -358,7 +368,7 @@ fn iter_riff(data: &[u8], from: usize, to: usize) -> Vec<RiffEntry> {
     out
 }
 
-fn find_riff(data: &[u8], from: usize, to: usize, want: &[u8]) -> Option<RiffEntry> {
+pub(crate) fn find_riff(data: &[u8], from: usize, to: usize, want: &[u8]) -> Option<RiffEntry> {
     iter_riff(data, from, to)
         .into_iter()
         .find(|e| e.list_type == want || e.kind == want)
@@ -406,15 +416,42 @@ fn avi_streams(head: &[u8]) -> (Option<String>, Option<u16>) {
 
 // ---------------------------------------------------------------- 容器识别
 
-/// 只读前 12 字节判容器：扫描时给每行补容器用，比指纹采样（192KB）便宜三个数量级。
+/// 只读前 64 字节判容器：扫描时给每行补容器用，比指纹采样（192KB）便宜三个数量级。
+/// 读到 64 而不是 12，是为了让 EBML 能定位 DocType（区分 matroska / webm，见下）。
 pub fn container_of_path(path: &Path) -> Option<String> {
     let mut f = File::open(path).ok()?;
-    let mut head = [0u8; 12];
+    let mut head = [0u8; 64];
     let n = f.read(&mut head).unwrap_or(0);
     if n < 12 {
         return None;
     }
-    container_of(&head)
+    container_of(&head[..n])
+}
+
+/// EBML（Matroska 与 WebM 共用同一套容器头）只有 DocType 能区分二者：
+/// 两者开头都是 `1A45DFA3`，但可播性相反——Chromium 收 webm、不收 matroska，
+/// 混着报会连累本来能播的 WebM（被送去转封装）或放过放不了的 MKV（黑屏）。
+fn ebml_doctype(head: &[u8]) -> Option<&'static str> {
+    let end = head.len().min(64);
+    let mut i = 4; // 跳过 EBML magic
+    while i + 3 < end {
+        if head[i] == 0x42 && head[i + 1] == 0x82 {
+            // 0x42 0x82 = DocType；紧接着是 VINT 长度（0x84→4 字节、0x88→8 字节）
+            let size = (head[i + 2] & 0x7f) as usize;
+            let s = i + 3;
+            let e = (s + size).min(end);
+            let name = std::str::from_utf8(&head[s..e])
+                .ok()?
+                .trim_end_matches('\0');
+            return match name {
+                "webm" => Some("webm"),
+                "matroska" => Some("matroska"),
+                _ => None,
+            };
+        }
+        i += 1;
+    }
+    None
 }
 
 pub(crate) fn container_of(head: &[u8]) -> Option<String> {
@@ -426,7 +463,12 @@ pub(crate) fn container_of(head: &[u8]) -> Option<String> {
         return Some(format!("mp4 ({brand})"));
     }
     if head.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
-        return Some("matroska / webm".to_string());
+        // 读得到 DocType 就精确区分；只有 12 字节（老数据/短读）时退回模糊结论
+        return Some(
+            ebml_doctype(head)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "matroska / webm".to_string()),
+        );
     }
     if &head[0..4] == b"RIFF" && head.len() > 11 && &head[8..12] == b"AVI " {
         return Some("avi".to_string());
@@ -516,8 +558,9 @@ pub fn probe(raw: &str) -> VideoProbe {
             if let Some((name, unsupported)) = describe_audio_tag(tag) {
                 out.audio_codec = Some(name.to_string());
                 if unsupported && out.unsupported_hint.is_none() {
-                    out.unsupported_hint =
-                        Some(format!("音轨 {name} 不在 WebView2/Chromium 默认解码白名单内"));
+                    out.unsupported_hint = Some(format!(
+                        "音轨 {name} 不在 WebView2/Chromium 默认解码白名单内"
+                    ));
                 }
             } else {
                 out.audio_codec = Some(format!("未知音频格式 0x{tag:04x}"));
@@ -540,9 +583,8 @@ pub fn probe(raw: &str) -> VideoProbe {
                 }
                 None => {
                     out.video_codec = Some(format!("未识别编码 {cc}"));
-                    out.note = Some(
-                        "fourcc 不在映射表内：需先确认编码再决定转封装还是重编码".to_string(),
-                    );
+                    out.note =
+                        Some("fourcc 不在映射表内：需先确认编码再决定转封装还是重编码".to_string());
                 }
             },
         }
@@ -627,22 +669,14 @@ mod tests {
         let vstrl = riff(
             "LIST",
             "strl",
-            &[
-                riff("strh", "", &strh(b"vids")),
-                riff("strf", "", &vstrf),
-            ]
-            .concat(),
+            &[riff("strh", "", &strh(b"vids")), riff("strf", "", &vstrf)].concat(),
         );
         let mut astrf = vec![0u8; 16]; // WAVEFORMATEX
         astrf[0..2].copy_from_slice(&audio_tag.to_le_bytes());
         let astrl = riff(
             "LIST",
             "strl",
-            &[
-                riff("strh", "", &strh(b"auds")),
-                riff("strf", "", &astrf),
-            ]
-            .concat(),
+            &[riff("strh", "", &strh(b"auds")), riff("strf", "", &astrf)].concat(),
         );
         let hdrl = riff("LIST", "hdrl", &[vstrl, astrl].concat());
         riff("RIFF", "AVI ", &hdrl)
@@ -693,7 +727,7 @@ mod tests {
             r.container_hint
                 .as_deref()
                 .unwrap_or("")
-                .contains("不在 Chromium/Edge 的 HTML5"),
+                .contains("不在内置播放器接受的容器内"),
             "容器层面必须点名 AVI 放不了"
         );
         assert!(
@@ -719,7 +753,11 @@ mod tests {
                 .contains("转封装"),
             "h264 应给出转封装而不是重编码"
         );
-        assert!(!r.unsupported_hint.as_deref().unwrap_or("").contains("需重编码"));
+        assert!(!r
+            .unsupported_hint
+            .as_deref()
+            .unwrap_or("")
+            .contains("需重编码"));
     }
 
     #[test]
@@ -766,11 +804,47 @@ mod tests {
 
     #[test]
     fn non_mp4_container_is_reported_without_guessing() {
-        let p = write_tmp("mkv", "mkv", &[0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let p = write_tmp(
+            "mkv",
+            "mkv",
+            &[0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
         let r = probe(&p.to_string_lossy());
+        // 只有 12 字节、读不到 DocType 时保留模糊结论，不编造
         assert_eq!(r.container.as_deref(), Some("matroska / webm"));
         assert!(r.video_codec.is_none(), "不猜编码");
         assert!(r.note.is_some());
+    }
+
+    #[test]
+    fn mkv_and_webm_are_told_apart_by_doctype() {
+        // EBML 头两者完全一致，只有 DocType 不同；可播性也相反（Chromium 收 webm、不收 mkv）
+        let mkv = write_tmp("m", "mkv", &sample_ebml("matroska"));
+        let m = probe(&mkv.to_string_lossy());
+        assert_eq!(m.container.as_deref(), Some("matroska"));
+        assert!(
+            m.container_hint.is_some(),
+            "MKV 必须被点名放不了（否则用户点开就是黑屏）"
+        );
+
+        let webm = write_tmp("w", "webm", &sample_ebml("webm"));
+        let w = probe(&webm.to_string_lossy());
+        assert_eq!(w.container.as_deref(), Some("webm"));
+        assert_eq!(
+            w.container_hint, None,
+            "WebM 受支持，不能因为头与 MKV 同形就被送去转封装"
+        );
+    }
+
+    /// 造一个带 DocType 的最小 EBML 头（Matroska / WebM 共用这一套）
+    fn sample_ebml(doctype: &str) -> Vec<u8> {
+        let mut v = vec![0x1a, 0x45, 0xdf, 0xa3, 0xa3];
+        v.extend_from_slice(&[0x42, 0x86, 0x81, 0x01]); // EBMLVersion
+        v.extend_from_slice(&[0x42, 0x82]); // DocType
+        v.push(0x80 | doctype.len() as u8); // VINT 长度
+        v.extend_from_slice(doctype.as_bytes());
+        v.extend_from_slice(&[0x42, 0x87, 0x81, 0x04]); // DocTypeVersion
+        v
     }
 
     #[test]

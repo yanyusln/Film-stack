@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { usePlatform } from "@/platform";
 import DupBadge from "./DupBadge.vue";
 import AppIcon from "./AppIcon.vue";
 import { unplayableContainerLabel } from "@/composables/containerSupport";
-import type { VideoRecord } from "@/types/video";
 
 // 视频卡片（设计稿 PC：白底圆角 12px + 封面 16:9 + 右下时长 + 右上重复角标 +
 // 标题 16/500 + 路径 11 灰）。重复只用重叠胶片角标，文件名后不追加文字（C6）。
 const props = withDefaults(
   defineProps<{
-    video: VideoRecord;
+    /** 结构化子集：首页的 VideoRecord 与分组页的 VideoMeta 都满足 */
+    video: {
+      name: string;
+      path: string;
+      duration: number | null;
+      duplicateCount: number;
+      container: string | null;
+    };
     thumbUrl: string | null;
     thumbState: "pending" | "ready" | "failed" | undefined;
     /** PC 鼠标形态才给复选（设计稿「已选 N 个」）；触屏不做 hover，交给分组页的编辑态 */
@@ -32,7 +38,9 @@ watch(
 );
 
 const src = computed(() =>
-  props.thumbUrl && !failed.value ? convertFileSrc(props.thumbUrl) : null,
+  props.thumbUrl && !failed.value
+    ? usePlatform().toAssetUrl(props.thumbUrl)
+    : null,
 );
 const placeholderText = computed(() =>
   failed.value || props.thumbState === "failed" ? "无封面" : "封面生成中",

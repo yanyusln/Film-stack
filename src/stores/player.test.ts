@@ -290,14 +290,39 @@ describe("转封装：容器放不了但编码救得回", () => {
     expect(store.current?.id).toBe("v1");
   });
 
-  it("转失败就退回原路径，不假装能播（并说出原因）", async () => {
+  it("转失败就停在失败态、不再下发 src（防 error→自检→转封装→失败 死循环）", async () => {
     const store = usePlayerStore();
     vi.mocked(cmd.remuxToCache).mockResolvedValue(cached("error", null));
     await store.openPlaylist(avi(), "folder", "x", "v0");
     expect(store.remuxState).toBe("failed");
-    expect(store.src).toBe("asset://D:\\v\\a.mp4");
+    // 失败后若回落原路径，<video> 会再报错并再次触发转封装 → 无限循环（真机整页闪烁）
+    expect(store.src).toBeNull();
     // 原因码必须往上传：真机曾出现「秒失败但界面什么都不说」，只能翻缓存目录反推
     expect(store.remuxReason).toBe("ffmpeg_missing");
+  });
+
+  it("失败后再次自检/准备不得重复转封装（循环断链）", async () => {
+    const store = usePlayerStore();
+    vi.mocked(cmd.remuxToCache).mockResolvedValue(cached("error", null));
+    vi.mocked(cmd.probeVideo).mockResolvedValue({
+      path: "D:\\v\\a.mp4",
+      exists: true,
+      size: 10,
+      container: "avi",
+      videoCodec: null,
+      audioCodec: null,
+      videoSupported: false,
+      unsupportedHint: null,
+      containerHint: "avi 不在接受类型内",
+      suggestCommand: "ffmpeg -i a -c copy b.mp4",
+      note: null,
+    } as unknown as Awaited<ReturnType<typeof cmd.probeVideo>>);
+    await store.openPlaylist(avi(), "folder", "x", "v0");
+    await store.diagnose();
+    await store.prepareSource();
+    expect(vi.mocked(cmd.remuxToCache)).toHaveBeenCalledTimes(1);
+    expect(store.remuxState).toBe("failed");
+    expect(store.src).toBeNull();
   });
 
   it("invoke 抛错要与 Rust 报错区分开", async () => {
@@ -309,7 +334,7 @@ describe("转封装：容器放不了但编码救得回", () => {
     await store.openPlaylist(avi(), "folder", "x", "v0");
     expect(store.remuxState).toBe("failed");
     expect(store.remuxReason).toBe("invoke_failed");
-    expect(store.src).toBe("asset://D:\\v\\a.mp4");
+    expect(store.src).toBeNull();
   });
 
   it("老数据没容器：自检说救得回也补一次（不预转、不猜）", async () => {
