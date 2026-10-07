@@ -2,20 +2,23 @@ import { onUnmounted, ref, toValue } from "vue";
 import type { MaybeRefOrGetter } from "vue";
 
 // 播放页手势层（W4-b / 技术方案 §8.5）。
-// 状态机：idle → press → (move_y 竖滑 | longpress 长按 2x | doubletap ±10s | tap 播放/暂停) → release。
-// 只做判定，不碰业务：seek / 倍速 / 音量 / 亮度全部通过回调交给播放页，方便单测。
+// 状态机：idle → press → (vertical 竖滑亮/音 | seek 横滑进退 | longpress 长按 2x) → release。
+// 轻点：单击切换控制栏显隐（不暂停）；双击暂停/恢复；横滑拖动前进/后退。
+// 只做判定，不碰业务：具体动作全部通过回调交给播放页，方便单测。
 
 export type GestureSide = "left" | "right";
 export type GestureHintKind = "seek" | "rate" | "volume" | "brightness";
 
 export interface GestureHint {
   kind: GestureHintKind;
-  /** seek 为秒数（±10）；volume/brightness 为 0..1 电平。 */
+  /** volume/brightness 为 0..1 电平；seek 为绝对目标秒数（=target）。 */
   value: number;
   side?: GestureSide;
+  /** 横滑 seek 时的目标秒数（与 value 相同，方便 UI 直接显示）。 */
+  target?: number;
 }
 
-/** 双击左右半屏的步长（秒）。 */
+/** 双击左右半屏的步长（秒），保留给兼容/测试引用。 */
 export const SEEK_STEP_SEC = 10;
 /** 双击判定窗口。 */
 export const DOUBLE_TAP_WINDOW_MS = 300;
@@ -54,6 +57,15 @@ export function verticalIntent(
   return Math.abs(dy) >= movePx && Math.abs(dy) > Math.abs(dx);
 }
 
+/// 横滑意图：主方向必须是 x，用于行进/后退拖动。
+export function horizontalIntent(
+  dx: number,
+  dy: number,
+  movePx: number = MOVE_PX,
+): boolean {
+  return Math.abs(dx) >= movePx && Math.abs(dx) > Math.abs(dy);
+}
+
 /// 竖滑增量：上滑为正（dy<0）。返回 -1..1，由调用方叠加到手势起点的电平上。
 export function swipeDelta01(dy: number, height: number): number {
   const denom = Math.max(1, height) * FULL_SWIPE_RATIO;
@@ -62,16 +74,24 @@ export function swipeDelta01(dy: number, height: number): number {
 
 export interface UseEdgeGestureOptions {
   /**
-   * 手势总控（AGENTS §5 平板开关）。关闭后**只保留点击与双击**，
-   * 长按 2x 与左右竖滑一并停用（技术方案 §8.5）。
+   * 手势总控（AGENTS §5 平板开关）。关闭后**只保留单击与双击**。
+   * 长按 2x、左右竖滑、横滑进退一并停用（技术方案 §8.5）。
    */
   master?: MaybeRefOrGetter<boolean>;
   /** 竖滑是否可用：PC 用横向滑条，仅触屏/移动形态接管。 */
   verticalEnabled?: MaybeRefOrGetter<boolean>;
+  /** 横滑 seek 是否可用：仅触屏/移动形态，PC 交给控制栏。 */
+  seekEnabled?: MaybeRefOrGetter<boolean>;
   /** 手势起点的当前电平（0..1），用于相对调节而非跳变。 */
   readLevel?: (side: GestureSide) => number;
+  /** 横滑 seek 起点时间/总时长，用于把像素位移换算成目标秒数。 */
+  readTime?: () => { currentTime: number; duration: number };
+  /** 单击：切换控制栏显隐（不暂停）。 */
   onTap?: () => void;
-  onSeekStep?: (sec: number) => void;
+  /** 双击：暂停 / 恢复。 */
+  onDoubleTap?: () => void;
+  /** 横滑 seek：目标绝对秒数（实时）。 */
+  onSeekDrag?: (to: number) => void;
   onLongPress?: (active: boolean) => void;
   onLevelChange?: (side: GestureSide, level: number) => void;
 }
@@ -81,15 +101,18 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
   const hint = ref<GestureHint | null>(null);
 
   let pointerId: number | null = null;
-  let phase: "idle" | "press" | "vertical" | "longpress" = "idle";
+  let phase: "idle" | "press" | "vertical" | "seek" | "longpress" = "idle";
   let start = { x: 0, y: 0 };
   let side: GestureSide = "left";
   let baseLevel = 0;
+  let baseTime = 0;
+  let duration = 0;
   let lastTapAt: number | null = null;
   let longPressTimer: number | null = null;
+  let pendingSingleTimer: number | null = null;
   let hintTimer: number | null = null;
 
-  /// `autoClearMs` 给定时自动消失（双击提示）；不给则由调用方显式收起（长按/竖滑期间需常驻）。
+  /// `autoClearMs` 给定时自动消失；不给则由调用方显式收起。
   function showHint(next: GestureHint | null, autoClearMs?: number) {
     if (hintTimer !== null) {
       window.clearTimeout(hintTimer);
@@ -112,6 +135,13 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
     }, ms);
   }
 
+  function clearPendingSingle() {
+    if (pendingSingleTimer !== null) {
+      window.clearTimeout(pendingSingleTimer);
+      pendingSingleTimer = null;
+    }
+  }
+
   function cancelLongPress() {
     if (longPressTimer !== null) {
       window.clearTimeout(longPressTimer);
@@ -120,6 +150,9 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
   }
 
   function detach() {
+    // 注意：此处不能清 pendingSingleTimer —— 单击的 deferred onTap 必须活过 reset()，
+    // 否则 onPointerUp 末尾的 reset()→detach() 会立刻把刚排好的单击定时器取消，单击永远不触发。
+    // pendingSingleTimer 只在「双击判定成立」和「组件卸载」两处清理。
     cancelLongPress();
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
@@ -130,6 +163,19 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
     detach();
     phase = "idle";
     pointerId = null;
+  }
+
+  /// 横滑 seek：dx 占满容器宽度 ≈ 拖动整段时长，按比例换算目标秒数。
+  function updateSeek(dx: number) {
+    if (!duration) return;
+    const width = surface.value?.getBoundingClientRect().width ?? 0;
+    if (width <= 0) return;
+    const target = Math.min(
+      Math.max(baseTime + (dx / width) * duration, 0),
+      duration,
+    );
+    showHint({ kind: "seek", value: target, target });
+    options.onSeekDrag?.(target);
   }
 
   function onDown(ev: PointerEvent) {
@@ -173,7 +219,22 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
         baseLevel = options.readLevel?.(side) ?? 0;
         return;
       }
-      // 横向拖动不做 seek，避免和系统返回手势/页面滚动打架
+      if (
+        horizontalIntent(dx, dy) &&
+        toValue(options.master ?? true) &&
+        toValue(options.seekEnabled ?? false) &&
+        options.readTime
+      ) {
+        const t = options.readTime();
+        if (t.duration > 0) {
+          phase = "seek";
+          baseTime = t.currentTime;
+          duration = t.duration;
+          updateSeek(dx);
+          return;
+        }
+      }
+      // 既非竖滑也非可 seek 横滑：放弃手势，交给页面/系统
       phase = "idle";
       return;
     }
@@ -187,6 +248,8 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
         value: level,
         side,
       });
+    } else if (phase === "seek") {
+      updateSeek(dx);
     }
   }
 
@@ -196,19 +259,30 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
       options.onLongPress?.(false);
       showHint(null);
     } else if (phase === "vertical") {
-      // 松手即止，提示稍作停留后自动收起
+      hideHintSoon();
+    } else if (phase === "seek") {
       hideHintSoon();
     } else if (phase === "press") {
+      // 轻点判定：单击与双击彻底区分（经典延迟法）。
+      // - 单击：按下抬起后等 DOUBLE_TAP_WINDOW_MS(300ms)，确认没有第二下才触发 onTap；
+      // - 双击：第二下在窗口内落下，立即触发 onDoubleTap，并取消第一下未决的 onTap。
+      // 这样双击永远不会混入单击的 UI 切换（不闪、不误触），
+      // 单击只是有 300ms 的固有等待，这是「单击/双击并存」的标准代价。
       const now = Date.now();
-      const double = isDoubleTap(lastTapAt, now);
-      lastTapAt = double ? null : now;
-      if (double) {
-        const step = side === "right" ? SEEK_STEP_SEC : -SEEK_STEP_SEC;
-        options.onSeekStep?.(step);
-        showHint({ kind: "seek", value: step, side });
+      if (isDoubleTap(lastTapAt, now)) {
+        // 第二下：双击成立，第一下的单击判定作废
+        clearPendingSingle();
+        lastTapAt = null;
+        options.onDoubleTap?.();
+      } else {
+        // 第一下（或与上次间隔已超窗）：先记账，延迟触发单击
+        clearPendingSingle();
+        lastTapAt = now;
+        pendingSingleTimer = window.setTimeout(() => {
+          pendingSingleTimer = null;
+          options.onTap?.();
+        }, DOUBLE_TAP_WINDOW_MS);
       }
-      // 单击始终生效：双击时两次 toggle 互相抵消，净效果就是 seek
-      options.onTap?.();
     }
     reset();
   }
@@ -221,6 +295,7 @@ export function useEdgeGesture(options: UseEdgeGestureOptions = {}) {
 
   onUnmounted(() => {
     detach();
+    clearPendingSingle();
     if (hintTimer !== null) window.clearTimeout(hintTimer);
   });
 

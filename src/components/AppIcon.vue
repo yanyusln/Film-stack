@@ -34,6 +34,9 @@ const ICONS: Record<string, string> = {
     <path d="M21 3v5h-5" />
     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
     <path d="M8 16H3v5" />`,
+  "rotate-cw": `
+    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+    <path d="M21 3v6h-6" />`,
   check: `<path d="M20 6 9 17l-5-5" />`,
   x: `<path d="M18 6 6 18" /><path d="m6 6 12 12" />`,
   // ---- 播放器控制（官方数据，lucide-static v0.469.0）----

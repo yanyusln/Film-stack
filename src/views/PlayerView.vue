@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { usePlayerStore } from "@/stores/player";
 import { useUiStore } from "@/stores/ui";
@@ -16,6 +16,7 @@ import {
   remuxHelp,
   remuxReasonText,
 } from "@/composables/mediaError";
+import { formatTime } from "@/composables/playbackPolicy";
 import { unplayableContainerLabel } from "@/composables/containerSupport";
 import AppIcon from "@/components/AppIcon.vue";
 import PlayerControls from "@/components/PlayerControls.vue";
@@ -70,21 +71,48 @@ const remuxContainerLabel = computed(() =>
 );
 // 全屏 API 不可用时的降级形态：页面内铺满（见 onFullscreen）
 const fakeFullscreen = ref(false);
+// 全屏下的视频方向：进入全屏默认横屏播放，可切回竖屏
+const videoOrientation = ref<"portrait" | "landscape">("portrait");
+// 真实全屏状态（由 fullscreenchange 同步，requestFullscreen 是异步的）
+const isFullscreen = ref(false);
+// 是否强制横屏显示：仅在全屏下生效
+const forceLandscape = computed(
+  () =>
+    (fakeFullscreen.value || isFullscreen.value) &&
+    videoOrientation.value === "landscape",
+);
 // 亮度是应用层遮罩（不改系统背光）：桌面与未接原生亮度的 Android 行为一致
 const brightness = ref(1);
 const pipActive = ref(false);
+
+// 设备物理方向角（0/90/180/270）：CSS 兜底时据此让 180° 翻转也能正确转。
+// 真实横屏（方向锁生效）下由系统负责翻转，此值仅在 portrait 兜底路径被 CSS 使用。
+const deviceAngle = ref<number>(
+  typeof screen !== "undefined" && screen.orientation
+    ? screen.orientation.angle
+    : 0,
+);
+const landscapeRot = computed(
+  () => `${(((90 - deviceAngle.value) % 360) + 360) % 360}deg`,
+);
+function onDeviceOrientationChange() {
+  if (screen.orientation) deviceAngle.value = screen.orientation.angle;
+}
 
 const {
   visible: controlsVisible,
   bump: bumpControls,
   hide: hideControls,
+  toggle: toggleControls,
 } = useAutoHide();
+
+const router = useRouter();
 
 let rateBeforeLongPress: PlaybackRate = 1;
 
-// 竖滑只给触屏：PC 控制栏已有横向音量条，鼠标竖直拖动不应抢事件
+// 竖滑 / 横滑 seek 只给触屏：PC 控制栏已有横向音量条与进度条，鼠标拖动不应抢事件
 const lastPointerIsTouch = ref(platform.isAndroid);
-const verticalEnabled = computed(
+const touchEnabled = computed(
   () => layout.value !== "pc" && lastPointerIsTouch.value,
 );
 
@@ -93,21 +121,55 @@ function onSurfaceDown(ev: PointerEvent) {
   if (!locked.value && !pipActive.value) onGestureDown(ev);
 }
 
+// 容器上的位移显隐：仅在真实位移超过阈值时唤起控制栏，避免单击时手指
+// 微动误把刚显示的 UI 又翻回去（触屏单击显隐仍交给手势层的 onTap）。
+let lastPointer = { x: 0, y: 0 };
+function onContainerPointerMove(ev: PointerEvent) {
+  if (lastPointer.x === 0 && lastPointer.y === 0) {
+    lastPointer = { x: ev.clientX, y: ev.clientY };
+    return;
+  }
+  if (
+    Math.abs(ev.clientX - lastPointer.x) +
+      Math.abs(ev.clientY - lastPointer.y) >
+    6
+  ) {
+    lastPointer = { x: ev.clientX, y: ev.clientY };
+    bumpControls();
+  }
+}
+function onContainerPointerLeave(ev: PointerEvent) {
+  lastPointer = { x: 0, y: 0 };
+  // 仅鼠标移出容器时立即隐藏；触屏松手交给 3s 自动淡出，避免一抬手就消失
+  if (ev.pointerType !== "touch") hideControls();
+}
+
 const {
   surface: gestureSurface,
   hint: gestureHint,
   onDown: onGestureDown,
 } = useEdgeGesture({
   master: gestureEnabled,
-  verticalEnabled,
+  verticalEnabled: touchEnabled,
+  seekEnabled: touchEnabled,
   readLevel: (side) =>
     side === "left" ? brightness.value : muted.value ? 0 : volume.value,
+  readTime: () => ({
+    currentTime: currentTime.value,
+    duration: duration.value,
+  }),
+  // 单击：仅切换底部控制栏显隐，与播放状态完全无关
   onTap: () => {
+    toggleControls();
+  },
+  // 双击：仅暂停 / 恢复，不碰控制栏显隐
+  onDoubleTap: () => {
     player.toggle();
     bumpControls();
   },
-  onSeekStep: (sec) => {
-    player.seek(sec);
+  // 横向拖动：实时 seek 到目标秒数
+  onSeekDrag: (to) => {
+    player.seekTo(to);
     bumpControls();
   },
   onLongPress: (active) => {
@@ -133,8 +195,11 @@ const {
 const hintText = computed(() => {
   const h = gestureHint.value;
   if (!h) return "";
-  if (h.kind === "seek")
-    return h.value > 0 ? `${h.value}s →` : `← ${-h.value}s`;
+  if (h.kind === "seek" && h.target !== undefined) {
+    const target = h.target;
+    const arrow = target >= currentTime.value ? "→" : "←";
+    return `${arrow} ${formatTime(target)} / ${formatTime(duration.value)}`;
+  }
   if (h.kind === "rate") return `${h.value}x 加速中`;
   return "";
 });
@@ -232,21 +297,78 @@ function onCancel() {
   bumpControls();
 }
 
-// 降级表：全屏 API 不可用时不隐藏按钮，改为页面内铺满（技术方案 §8.5）
+// 降级表：全屏 API 不可用时不隐藏按钮，改为页面内铺满（技术方案 §8.5）。
+// 进全屏即「强制横屏」：先 requestFullscreen，再 screen.orientation.lock('landscape')
+// （允许 90°/270° 双向，手机翻转 180° 系统自动把画面翻过来，B 站同款）。
+// 方向锁失败（Tauri WebView 偶发）时退回 CSS 整层旋转兜底，UI 仍保持横屏。
 async function onFullscreen() {
   const box = video.value?.parentElement;
   if (!box) return;
   if (!caps.value.fullscreen.supported) {
     fakeFullscreen.value = !fakeFullscreen.value;
+    const landscape = fakeFullscreen.value;
+    videoOrientation.value = landscape ? "landscape" : "portrait";
+    // 页面内铺满也尝试系统级横屏，失败则由 CSS 兜底
+    void platform.lockOrientation(landscape ? "landscape" : null);
+    bumpControls();
     return;
   }
   try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await box.requestFullscreen();
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      videoOrientation.value = "portrait";
+      void platform.lockOrientation(null);
+    } else {
+      await box.requestFullscreen();
+      videoOrientation.value = "landscape"; // 进全屏默认横屏播放
+      // 系统级横屏：锁 landscape（双向），手机翻转 180° 仍可转
+      void platform.lockOrientation("landscape");
+    }
+    bumpControls();
   } catch {
     fakeFullscreen.value = true;
-    uiStore.notify("当前环境不支持全屏，已改为页面内铺满", "info");
+    videoOrientation.value = "landscape";
+    void platform.lockOrientation("landscape");
+    uiStore.notify("当前环境不支持全屏，已改为页面内铺满（横屏）", "info");
+    bumpControls();
   }
+}
+
+// 横屏 / 竖屏切换：切换后同步系统级方向锁，失败由 CSS 兜底
+function toggleOrientation() {
+  const next =
+    videoOrientation.value === "landscape" ? "portrait" : "landscape";
+  videoOrientation.value = next;
+  void platform.lockOrientation(next);
+}
+
+// 系统手势退出全屏（如返回键）也同步状态，并回到竖屏、解锁方向
+function onFullscreenChange() {
+  isFullscreen.value = !!document.fullscreenElement;
+  if (!document.fullscreenElement) {
+    videoOrientation.value = "portrait";
+    void platform.lockOrientation(null);
+  }
+}
+
+// 全屏下的返回：只退出全屏（页面内铺满或系统全屏）、解锁方向并留在播放页；
+// 仅在非全屏（已是普通播放页）时才跳回影片库，避免「返回」直接飞出播放页。
+function onBack() {
+  if (document.fullscreenElement) {
+    void document.exitFullscreen().catch(() => undefined);
+    fakeFullscreen.value = false;
+    videoOrientation.value = "portrait";
+    void platform.lockOrientation(null);
+    return; // 留在播放页（非全屏形态）
+  }
+  if (fakeFullscreen.value) {
+    fakeFullscreen.value = false;
+    videoOrientation.value = "portrait";
+    void platform.lockOrientation(null);
+    return; // 留在播放页（非全屏形态）
+  }
+  // 已是普通播放页：返回影片库
+  router.push("/");
 }
 
 async function onPip() {
@@ -258,10 +380,13 @@ async function onPip() {
   if (!ok) uiStore.notify("当前环境不支持画中画", "error");
 }
 
-// 锁屏层（防误触）+ F16 横屏锁：方向锁只在 Android 全屏下有意义，失败静默
+// 锁屏层（防误触）+ 方向锁：方向锁与当前视频方向一致（landscape/portrait），
+// 仅在 Android 全屏下有意义，失败静默（见 toggleOrientation 同款兜底）。
 async function toggleLock() {
   player.locked = !player.locked;
-  const ok = await platform.lockOrientation(player.locked);
+  const ok = await platform.lockOrientation(
+    player.locked ? videoOrientation.value : null,
+  );
   if (
     player.locked &&
     !ok &&
@@ -279,7 +404,10 @@ async function onSelectPlaylist(i: number) {
   await player.persist(true);
   await player.openIndex(i);
 }
-
+/**
+ * 
+ * @param ev 
+ */
 function onKeyDown(ev: KeyboardEvent) {
   const target = ev.target as HTMLElement | null;
   if (target && ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName))
@@ -348,12 +476,25 @@ onMounted(() => {
   player.attach(video.value);
   if (current.value) bumpControls();
   window.addEventListener("keydown", onKeyDown);
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+  screen.orientation?.addEventListener("change", onDeviceOrientationChange);
+  // 拦截 Android 实体返回键：全屏时退出全屏并留在播放页，非全屏交给默认返回（影片库）。
+  platform.setBackHandler(() => {
+    if (document.fullscreenElement || fakeFullscreen.value) {
+      onBack();
+      return true; // 已消费
+    }
+    return false; // 未消费 → 平台执行默认返回
+  });
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeyDown);
+  document.removeEventListener("fullscreenchange", onFullscreenChange);
+  screen.orientation?.removeEventListener("change", onDeviceOrientationChange);
   video.value?.removeEventListener("enterpictureinpicture", onPipEnter);
   video.value?.removeEventListener("leavepictureinpicture", onPipLeave);
+  platform.setBackHandler(null); // 复位，避免组件卸载后闭包泄漏
   player.attach(null);
   void player.close();
 });
@@ -392,17 +533,23 @@ onBeforeUnmount(() => {
       v-else
       class="overflow-hidden bg-black"
       :class="
-        fakeFullscreen
+        fakeFullscreen || isFullscreen
           ? 'fixed inset-0 z-50'
           : 'relative aspect-video w-full rounded-card'
       "
-      @pointermove="bumpControls"
-      @pointerleave="hideControls"
+      @pointermove="onContainerPointerMove"
+      @pointerleave="onContainerPointerLeave"
     >
+      <!-- 舞台：横屏时整层旋转，视频 + 控制栏 + 手势层一起翻转 -->
+      <div
+        class="stage"
+        :class="forceLandscape ? 'stage--landscape' : ''"
+        :style="forceLandscape ? { '--landscape-rot': landscapeRot } : undefined"
+      >
       <video
         ref="video"
         :src="src ?? undefined"
-        class="h-full w-full"
+        class="h-full w-full object-contain"
         playsinline
         preload="metadata"
         @loadedmetadata="onLoadedMetadata"
@@ -414,6 +561,18 @@ onBeforeUnmount(() => {
         @ended="player.onEnded()"
         @error="onMediaError"
       />
+
+      <!-- 全屏下的返回：页面级 header 被全屏容器（z-50）盖住，这里补一个 -->
+      <button
+        v-if="fakeFullscreen || isFullscreen"
+        type="button"
+        class="absolute left-3 top-3 z-30 flex h-10 w-10 items-center justify-center rounded-btn bg-black/50 text-white transition-colors duration-200 ease-out hover:bg-black/70"
+        aria-label="退出全屏"
+        title="退出全屏"
+        @click="onBack"
+      >
+        <AppIcon name="arrow-left" :size="20" />
+      </button>
 
       <!-- 准备 / 转封装期间盖住画面：没有这一层，用户看到的就是「点了没反应，过一会儿突然开始播」 -->
       <div
@@ -458,26 +617,28 @@ onBeforeUnmount(() => {
         @pointerdown="onSurfaceDown"
       />
 
-      <!-- 竖滑指示：左亮度 / 右音量 -->
+      <!-- 竖滑指示：左亮度 / 右音量；做成手机系统音量那种立起来的进度条 -->
       <template v-if="sliderHint">
         <div
-          class="pointer-events-none absolute bottom-1/2 top-1/2 flex w-14 translate-y-1 flex-col items-center gap-2 px-2"
-          :class="sliderHint.side === 'left' ? 'left-2' : 'right-2'"
+          class="pointer-events-none absolute top-1/2 flex -translate-y-1/2 flex-col items-center gap-2"
+          :class="sliderHint.side === 'left' ? 'left-5' : 'right-5'"
         >
-          <span class="text-xs text-white/80">
-            {{ sliderHint.kind === "brightness" ? "亮度" : "音量" }}
-          </span>
+          <AppIcon
+            :name="sliderHint.kind === 'brightness' ? 'sun' : 'volume-2'"
+            :size="20"
+            class="text-white/90"
+          />
           <div
-            class="flex h-28 w-2 flex-col justify-end rounded-btn bg-white/20"
+            class="relative h-44 w-1.5 overflow-hidden rounded-full bg-white/25"
           >
             <div
-              class="w-full rounded-btn"
-              :style="{
-                height: `${Math.round(sliderHint.value * 100)}%`,
-                background: 'var(--pink)',
-              }"
+              class="absolute bottom-0 w-full rounded-full bg-[var(--pink)]"
+              :style="{ height: `${Math.round(sliderHint.value * 100)}%` }"
             />
           </div>
+          <span class="text-xs tabular-nums text-white/90">
+            {{ Math.round(sliderHint.value * 100) }}%
+          </span>
         </div>
       </template>
 
@@ -514,9 +675,11 @@ onBeforeUnmount(() => {
         :loop-mode="loopMode"
         :has-prev="hasPrev"
         :has-next="hasNext"
-        :visible="(controlsVisible || !playing) && !locked && !pipActive"
+        :visible="controlsVisible && !locked && !pipActive"
         :locked="locked"
         :pip-visible="pipVisible"
+        :fullscreen="fakeFullscreen || isFullscreen"
+        :orientation="videoOrientation"
         @toggle="player.toggle()"
         @seek="player.seek($event)"
         @seek-to="player.seekTo($event)"
@@ -527,9 +690,11 @@ onBeforeUnmount(() => {
         @next="player.playNext()"
         @set-loop="player.setLoopMode($event)"
         @fullscreen="onFullscreen()"
+        @toggle-orientation="toggleOrientation"
         @toggle-lock="toggleLock()"
         @pip="onPip()"
       />
+      </div>
     </div>
 
     <!-- 进度与说明都在画面上的遮罩里，这里不再重复一遍（省得两处文案不同步） -->
@@ -592,3 +757,27 @@ onBeforeUnmount(() => {
     />
   </section>
 </template>
+
+<style scoped>
+/* 横屏舞台：整层旋转，视频 + 控制栏 + 手势层一起翻转，UI 跟随视频。
+   仅在视口本身仍为竖屏时生效（页面内铺满 / 全屏但系统未旋转）；
+   真实横屏视口下交给设备物理横屏，不干预，UI 自然正立。 */
+.stage {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+@media (orientation: portrait) {
+  .stage--landscape {
+    top: 50%;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    width: 100vh;
+    height: 100vw;
+    /* --landscape-rot 默认 90deg；设备翻转 180° 时由 JS 改为 270deg，画面同步翻转 */
+    transform: translate(-50%, -50%) rotate(var(--landscape-rot, 90deg));
+    transform-origin: center center;
+  }
+}
+</style>

@@ -1,9 +1,27 @@
 import { ref } from "vue";
 import * as cmd from "@/bridge/commands";
+import { onBackButtonPress } from "@tauri-apps/api/app";
 import type { PlatformApi } from "./index";
 
 /** 本机媒体服务端口：0 = 还没拿到（此时回退 asset URL），由 ensureMediaServer 填入。 */
 const port = ref(0);
+
+// 实体返回键（Android 返回键 / 手势）拦截：只注册一次全局监听，由 backHandler 决定当前是否消费。
+// 回调返回 true=已消费（如退出全屏、留在播放页），false=未消费 → 平台执行默认返回。
+let backHandler: (() => boolean) | null = null;
+let backUnlisten: Awaited<ReturnType<typeof onBackButtonPress>> | null = null;
+
+async function ensureBackListener() {
+  if (backUnlisten) return;
+  backUnlisten = await onBackButtonPress(({ canGoBack }) => {
+    if (!backHandler) {
+      if (canGoBack) window.history.back();
+      return;
+    }
+    const consumed = backHandler();
+    if (!consumed && canGoBack) window.history.back();
+  });
+}
 
 // Android 端（技术方案 §3.3 / §8.5）：
 // 亮度与 PiP 的真正原生实现需要 Kotlin 插件（后续周次），此处给出可用的降级路径：
@@ -47,19 +65,18 @@ export const androidApi: PlatformApi = {
       return false;
     }
   },
-  // F16（W5-3）：走 Screen Orientation API；非全屏时 WebView 会拒绝，返回 false 由 UI 提示。
-  // 真正的 Activity 方向锁仍需 Kotlin 插件，属后续周次（技术方案 §9.2）。
-  async lockOrientation(locked) {
-    // lib.dom 的 ScreenOrientation 尚未声明 lock/unlock，这里按结构取用，失败即降级
+  // 方向锁：'landscape' 允许 90°/270° 双向（手机翻转 180° 仍可转）；'portrait' 锁竖屏；null 解锁。
+  // 走 Screen Orientation API；非全屏时 WebView 可能拒绝，失败即降级返回 false（技术方案 §9.2）。
+  async lockOrientation(mode: "landscape" | "portrait" | null) {
     const o = screen.orientation as unknown as
       { lock?: (o: string) => Promise<void>; unlock?: () => void } | undefined;
     if (!o?.lock) return false;
     try {
-      if (locked) {
-        if (!document.fullscreenElement) return false;
-        await o.lock("landscape");
-      } else {
+      if (mode === null) {
         o.unlock?.();
+      } else {
+        // landscape 锁两种横屏角，使 180° 翻转生效；portrait 锁竖屏
+        await o.lock(mode);
       }
       return true;
     } catch {
@@ -68,5 +85,9 @@ export const androidApi: PlatformApi = {
   },
   setBrightness() {
     /* 占位：待 Kotlin 原生亮度（§8.5） */
+  },
+  setBackHandler(handler) {
+    backHandler = handler;
+    void ensureBackListener();
   },
 };

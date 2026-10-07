@@ -11,6 +11,7 @@
     "init:android": "tauri android init",
     "build:desktop": "vue-tsc --noEmit && vite build && tauri build",
     "build:android": "vue-tsc --noEmit && vite build && tauri android build --apk --aab",
+    "build:android:debug": "tauri android build --apk --debug --target aarch64",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "lint": "eslint . && prettier -c .",

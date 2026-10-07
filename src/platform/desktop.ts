@@ -17,11 +17,14 @@ export const desktopApi: PlatformApi = {
     // PC V1 不做画中画（技术方案 §8.5 / AGENTS §5），按钮不出现
     return false;
   },
-  async lockOrientation() {
+  async lockOrientation(_mode: "landscape" | "portrait" | null) {
     // PC 不调用方向锁，只切窗口/全屏（技术方案 §9.2）
     return false;
   },
   setBrightness() {
     /* no-op on desktop */
+  },
+  setBackHandler() {
+    /* 桌面端无实体返回键，no-op（PC 的 Esc 由播放页 keydown 处理） */
   },
 };

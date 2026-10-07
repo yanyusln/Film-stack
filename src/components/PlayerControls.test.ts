@@ -17,6 +17,8 @@ const BASE = {
   visible: true,
   locked: false,
   pipVisible: false,
+  fullscreen: false,
+  orientation: "portrait" as const,
 };
 
 function mountControls(patch: Partial<typeof BASE> = {}) {

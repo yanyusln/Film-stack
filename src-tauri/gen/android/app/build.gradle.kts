@@ -25,6 +25,21 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    // Release 签名：从 src-tauri/signing.properties 读取密钥（该文件不被 Tauri 覆盖），
+    // keystore 位于 gen/android/keystore.jks（相对 app 模块为 ../keystore.jks）。
+    signingConfigs {
+        create("release") {
+            val propsFile = file("../../../signing.properties")
+            val props = Properties().apply {
+                if (propsFile.exists()) propsFile.inputStream().use { load(it) }
+            }
+            storeFile = file(props.getProperty("STORE_FILE") ?: "../keystore.jks")
+            storePassword = props.getProperty("STORE_PASSWORD") ?: ""
+            keyAlias = props.getProperty("KEY_ALIAS") ?: ""
+            keyPassword = props.getProperty("KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -39,6 +54,7 @@ android {
             }
         }
         getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
             optimization {
                enable = true
             }

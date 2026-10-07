@@ -35,7 +35,13 @@ export function useAutoHide(delayMs: number = AUTO_HIDE_MS) {
     stop();
   }
 
+  /** 单击切换显隐：显示后照常走 3s 自动淡出；已显示则立即隐藏。 */
+  function toggle() {
+    if (visible.value) hide();
+    else bump();
+  }
+
   onUnmounted(stop);
 
-  return { visible, bump, show, hide };
+  return { visible, bump, show, hide, toggle };
 }

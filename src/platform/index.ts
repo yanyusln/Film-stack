@@ -28,9 +28,17 @@ export interface PlatformApi {
   ensureMediaServer(): Promise<void>;
   // 传入 <video>：由平台决定走 WebView PiP 还是原生 Activity PiP。返回 false 表示不支持。
   enterPip(video?: HTMLVideoElement | null): Promise<boolean>;
-  // F16 横屏锁：true=已锁定横屏 / 已解锁，false=当前环境不支持（PC 恒为 false，§9.2）。
-  lockOrientation(locked: boolean): Promise<boolean>;
+  // 方向锁：'landscape'=锁定横屏（允许 90°/270° 双向，手机翻转 180° 仍可转）；
+  // 'portrait'=锁定竖屏；null=解锁交还系统。返回 false 表示当前环境不支持（PC 恒 false，§9.2）。
+  lockOrientation(mode: "landscape" | "portrait" | null): Promise<boolean>;
   setBrightness(level: number): void;
+  /**
+   * 拦截「返回」意图（Android 实体返回键 / 手势）。回调返回 true 表示已消费
+   * （如退出全屏、留在播放页），平台不再做默认返回；返回 false 则平台执行默认返回
+   * （webview 有历史则 window.history.back，否则不处理）。桌面端为 no-op。
+   * 传 null 取消拦截；组件卸载时应复位，避免闭包泄漏。
+   */
+  setBackHandler(handler: (() => boolean) | null): void;
 }
 
 export function usePlatform(): PlatformApi {

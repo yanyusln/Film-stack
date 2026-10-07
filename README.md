@@ -15,7 +15,7 @@
 - **缩略图**：优先取系统媒体图，后台 ffmpeg 抽帧（并发 2），`>500MB` 显示任务进度，不常驻总进度条。
 - **一级分组 + 多归属引用**：分组内拖拽排序（各端独立记忆），不修改磁盘。
 - **重复标记**：仅右上角重叠胶片角标（文案「该文件共有 N 处副本」），不删不移动。
-- **播放器**：进度条（无悬浮缩略图）、6 档倍速、PC 横向音量、Android 右音量 / 左亮度竖滑、双击左右半屏 ±10s、长按临时 2x、控制栏 3s 淡出。
+- **播放器**：进度条（无悬浮缩略图）、6 档倍速、PC 横向音量、Android 右音量 / 左亮度竖滑、双击左右半屏 ±10s、长按临时 2x、控制栏 3s 淡出。全屏按钮（翻转图标）进入横屏铺满；横 / 竖屏切换按钮让**整个 UI（控制栏 + 手势层）跟随视频一起旋转**，而非仅旋转画面。
 - **续播**：全局三选一（默认 `ask`）+「本次不再询问」（仅跳过本次，不改全局）；末尾 30s 不存进度。
 - **播放列表**：分组序 / 文件夹序切换，单曲 / 列表循环。
 - **Android**：画中画、横屏锁屏键、平板「手势总控」开关。
@@ -100,6 +100,37 @@ pnpm dev:android
 pnpm build:desktop     # vue-tsc 类型检查 + vite 构建 + tauri 打包
 pnpm build:android     # 产出 --apk --aab
 ```
+
+#### 打包产物路径
+
+构建完成后，安装包输出位置如下（以版本 `1.0.0`、产品名 `影栈-本地视频播放器` 为例）：
+
+| 平台 | 格式 | 产物路径 |
+| --- | --- | --- |
+| Windows | MSI | `src-tauri/target/release/bundle/msi/影栈-本地视频播放器_1.0.0_x64_zh-CN.msi` |
+| Windows | NSIS 安装包 | `src-tauri/target/release/bundle/nsis/影栈-本地视频播放器_1.0.0_x64-setup.exe` |
+| macOS | DMG | `src-tauri/target/release/bundle/dmg/影栈-本地视频播放器_1.0.0_x64.dmg` |
+| macOS | App | `src-tauri/target/release/bundle/macos/影栈-本地视频播放器.app` |
+| Android | APK（通用架构） | `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk` |
+| Android | APK（按 ABI） | `src-tauri/gen/android/app/build/outputs/apk/<abi>/release/app-<abi>-release.apk` |
+| Android | AAB | `src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab` |
+
+> 桌面端产物统一在 `src-tauri/target/release/bundle/` 下；Android 产物在 `src-tauri/gen/android/app/build/outputs/`。
+> Windows MSI 文件名中的语言后缀 `zh-CN` 由 `tauri.conf.json` 的 `bundle.windows.wix.language` 决定；升级版本时把路径里的 `1.0.0` 换成对应版本号即可。
+
+#### 侧载安装到真机（adb）
+
+项目为侧载分发（不上架），用 `adb` 把 APK 装到手机：
+
+```bash
+# 若手机已装过「不同密钥签名」的同名包，先卸载再装，否则报 INSTALL_FAILED_UPDATE_INCOMPATIBLE
+adb uninstall app.local.videoplayer
+adb install src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+> - 包名固定为 `app.local.videoplayer`（见 `tauri.conf.json` 的 `identifier`）。
+> - 重新签名 / 更换 keystore 后，旧版必须 `adb uninstall` 一次才能覆盖安装。
+> - 走 `pnpm build:android` 时若带 `--target aarch64`，universal APK 实际只含 arm64 的 `.so`，仅 arm64 手机可装；日常侧载用 universal 包即可。
 
 ### Android 初始化（首次 / 重跑后需改回 Gradle 镜像）
 
