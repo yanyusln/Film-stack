@@ -56,6 +56,12 @@ src-tauri/gen/android/tauri.settings.gradle
 # Tauri CLI 生成的能力 schema
 src-tauri/gen/schemas/
 
+# Android 签名密钥与密码（禁止入库）
+src-tauri/keystore.jks
+*.jks
+src-tauri/signing.properties
+src-tauri/gen/android/app/tauri.properties
+
 # ai参考文件（仅供 AI 读取，不入库）
 AGENTS.md
 assets/
@@ -63,3 +69,21 @@ docs/
 CLAUDE.md
 .cursorrules
 .windsurfrules
+
+# 排障 / 调试产物（运行或测试时生成的 dump，非源码）
+edge_dom.html
+edge_err.txt
+edge_*.html
+edge_*.txt
+bugreport*.zip
+*.hprof
+*.trace
+hs_err_pid*.log
+
+# 密钥与本地环境变量（禁止入库）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.keystore
