@@ -7,6 +7,7 @@ src-tauri/target/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 src-tauri/*.db
 
 # 日志
@@ -29,6 +30,11 @@ Thumbs.db
 # 临时文件
 tmp/
 
+# 本地调试素材与产物（不入库）
+/test_*.avi
+/shot_*.png
+/*.b64
+
 # Android / Gradle 构建产物（不可整目录忽略，src-tauri/src 等源码必须入库）
 src-tauri/gen/android/app/build/
 src-tauri/gen/android/build/
@@ -49,9 +55,6 @@ src-tauri/gen/android/tauri.settings.gradle
 
 # Tauri CLI 生成的能力 schema
 src-tauri/gen/schemas/
-
-# e2e测试
-e2e/
 
 # ai参考文件（仅供 AI 读取，不入库）
 AGENTS.md
